@@ -1,0 +1,54 @@
+name: 'qpdf-publish'
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to clone'
+        required: true
+        type: string
+
+jobs:
+  build-release:
+    runs-on: macos-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: brew install cmake jpeg-turbo openssl@3
+
+      - uses: actions/checkout@v4
+        with:
+          repository: 'qpdf/qpdf'
+          ref: ${{ github.event.inputs.tag }}
+          path: qpdf
+
+      - working-directory: qpdf
+        run: mkdir -p output
+
+      - working-directory: qpdf
+        run: |
+          cmake -S . -B build \
+            -DUSE_IMPLICIT_CRYPTO=0 \
+            -DREQUIRE_CRYPTO_OPENSSL=1 \
+            -DCMAKE_EXE_LINKER_FLAGS="-static" \
+            -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/qpdf/output" \
+            -DCMAKE_INSTALL_LIBDIR="${{ github.workspace }}/qpdf/output" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_VERBOSE_MAKEFILE=ON \
+            -Wno-dev \
+            -DBUILD_TESTING=OFF
+
+      - working-directory: qpdf
+        run: cmake --build build
+
+      - working-directory: qpdf
+        run: cmake --install build
+
+      - run: zip -r "qpdf-${{ github.event.inputs.tag }}.zip" qpdf
+
+      - uses: ncipollo/release-action@v1
+        with:
+          tag: qpdf-${{ github.event.inputs.tag }}
+          name: qpdf-${{ github.event.inputs.tag }}
+          artifacts: 'qpdf-${{ github.event.inputs.tag }}.zip'
