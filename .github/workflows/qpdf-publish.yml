@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - run: brew install cmake jpeg-turbo openssl@3
+      - run: brew install jpeg-turbo openssl@3
 
       - uses: actions/checkout@v4
         with:
@@ -28,19 +28,23 @@ jobs:
 
       - working-directory: qpdf
         run: |
+          JPEG_TURBO_PREFIX=$(brew --prefix jpeg-turbo)
+          OPENSSL_PREFIX=$(brew --prefix openssl@3)
+          
           cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
             -DUSE_IMPLICIT_CRYPTO=0 \
             -DREQUIRE_CRYPTO_OPENSSL=1 \
-            -DCMAKE_EXE_LINKER_FLAGS="-static" \
-            -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/qpdf/output" \
-            -DCMAKE_INSTALL_LIBDIR="${{ github.workspace }}/qpdf/output" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_VERBOSE_MAKEFILE=ON \
+            -DOpenSSL_ROOT_DIR="${OPENSSL_PREFIX}" \
+            -DOpenSSL_USE_STATIC_LIBS=TRUE \
+            -DJPEG_INCLUDE_DIR="${JPEG_TURBO_PREFIX}/include" \
+            -DJPEG_LIBRARY="${JPEG_TURBO_PREFIX}/lib/libjpeg.a" \
+            -DCMAKE_PREFIX_PATH="${JPEG_TURBO_PREFIX};${OPENSSL_PREFIX}" \
             -Wno-dev \
             -DBUILD_TESTING=OFF
 
       - working-directory: qpdf
-        run: cmake --build build
+        run: cmake --build build --config Release --verbose
 
       - working-directory: qpdf
         run: cmake --install build
