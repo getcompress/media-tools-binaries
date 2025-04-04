@@ -55,3 +55,4 @@ jobs:
           tag: qpdf-${{ github.event.inputs.tag }}
           name: qpdf-${{ github.event.inputs.tag }}
           artifacts: 'qpdf-${{ github.event.inputs.tag }}.zip'
+          allowUpdates: true
