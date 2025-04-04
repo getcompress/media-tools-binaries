@@ -15,7 +15,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - run: brew install jpeg-turbo openssl@3
+      # openssl@3 cmake already available in macos-latest
+      - run: brew install jpeg-turbo
 
       - uses: actions/checkout@v4
         with:
@@ -45,9 +46,6 @@ jobs:
 
       - working-directory: qpdf
         run: cmake --build build --config Release --verbose
-
-      - working-directory: qpdf
-        run: cmake --install build
 
       - run: zip -r "qpdf-${{ github.event.inputs.tag }}.zip" qpdf
 
