@@ -17,7 +17,7 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          repository: 'resvg/resvg'
+          repository: 'linebender/resvg'
           ref: ${{ github.event.inputs.tag }}
           path: resvg
 
