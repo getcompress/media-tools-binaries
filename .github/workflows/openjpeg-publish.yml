@@ -44,6 +44,7 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -DBUILD_DOC=OFF \
             -DBUILD_TESTING=OFF \
+            -DCMAKE_FIND_LIBRARY_SUFFIXES=".a;.dylib" \
             -DPNG_INCLUDE_DIR="${PNG_PREFIX}/include" \
             -DPNG_LIBRARY="${PNG_PREFIX}/lib/libpng.a" \
             -DTIFF_INCLUDE_DIR="${TIFF_PREFIX}/include" \
