@@ -45,6 +45,7 @@ jobs:
             -Dlcms2_INCLUDE_DIR="${LCMS2_PREFIX}/include" \
             -Dlcms2_LIBRARY="${LCMS2_PREFIX}/lib/liblcms2.a" \
             -DCMAKE_PREFIX_PATH="${PNG_PREFIX};${TIFF_PREFIX};${LCMS2_PREFIX}" \
+            -DCMAKE_EXE_LINKER_FLAGS="-L${PNG_PREFIX}/lib -L${TIFF_PREFIX}/lib -L${LCMS2_PREFIX}/lib" \
             -Wno-dev
 
       - working-directory: openjpeg
