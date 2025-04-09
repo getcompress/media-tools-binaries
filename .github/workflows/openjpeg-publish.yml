@@ -1,0 +1,60 @@
+name: 'openjpeg-publish'
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to clone'
+        required: true
+        type: string
+
+jobs:
+  build-release:
+    runs-on: macos-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@v4
+
+      # openssl@3 cmake already available in macos-latest
+      - run: brew install libpng libtiff little-cms2
+
+      - uses: actions/checkout@v4
+        with:
+          repository: 'uclouvain/openjpeg'
+          ref: ${{ github.event.inputs.tag }}
+          path: openjpeg
+
+      - working-directory: openjpeg
+        run: mkdir -p output
+
+      - working-directory: openjpeg
+        run: |
+          PNG_PREFIX=$(brew --prefix libpng)
+          TIFF_PREFIX=$(brew --prefix libtiff)
+          LCMS2_PREFIX=$(brew --prefix little-cms2)
+          
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_DOC=OFF \
+            -DBUILD_TESTING=OFF \
+            -DPNG_INCLUDE_DIR="${PNG_PREFIX}/include" \
+            -DPNG_LIBRARY="${PNG_PREFIX}/lib/libpng.a" \
+            -DTIFF_INCLUDE_DIR="${TIFF_PREFIX}/include" \
+            -DTIFF_LIBRARY="${TIFF_PREFIX}/lib/libtiff.a" \
+            -Dlcms2_INCLUDE_DIR="${LCMS2_PREFIX}/include" \
+            -Dlcms2_LIBRARY="${LCMS2_PREFIX}/lib/liblcms2.a" \
+            -DCMAKE_PREFIX_PATH="${PNG_PREFIX};${TIFF_PREFIX};${LCMS2_PREFIX}" \
+            -Wno-dev
+
+      - working-directory: openjpeg
+        run: cmake --build build --config Release --verbose
+
+      - run: zip -r "openjpeg-${{ github.event.inputs.tag }}.zip" openjpeg
+
+      - uses: ncipollo/release-action@v1
+        with:
+          tag: openjpeg-${{ github.event.inputs.tag }}
+          name: openjpeg-${{ github.event.inputs.tag }}
+          artifacts: 'openjpeg-${{ github.event.inputs.tag }}.zip'
+          allowUpdates: true
