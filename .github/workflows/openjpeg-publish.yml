@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # openssl@3 cmake already available in macos-latest
-      - run: brew install libpng libtiff little-cms2
+      - run: brew install libpng libtiff little-cms2 zstd jpeg-turbo xz
 
       - uses: actions/checkout@v4
         with:
@@ -32,7 +32,13 @@ jobs:
           PNG_PREFIX=$(brew --prefix libpng)
           TIFF_PREFIX=$(brew --prefix libtiff)
           LCMS2_PREFIX=$(brew --prefix little-cms2)
+          ZSTD_PREFIX=$(brew --prefix zstd)
+          JPEG_TURBO_PREFIX=$(brew --prefix jpeg-turbo)
+          XZ_PREFIX=$(brew --prefix xz)
           
+          CMAKE_PREFIX_PATH_VALUE="${PNG_PREFIX};${TIFF_PREFIX};${LCMS2_PREFIX};${ZSTD_PREFIX};${JPEG_TURBO_PREFIX};${XZ_PREFIX}"
+          LINKER_FLAGS="-L${PNG_PREFIX}/lib -L${TIFF_PREFIX}/lib -L${LCMS2_PREFIX}/lib -L${ZSTD_PREFIX}/lib -L${JPEG_TURBO_PREFIX}/lib -L${XZ_PREFIX}/lib"
+  
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=OFF \
@@ -44,8 +50,8 @@ jobs:
             -DTIFF_LIBRARY="${TIFF_PREFIX}/lib/libtiff.a" \
             -Dlcms2_INCLUDE_DIR="${LCMS2_PREFIX}/include" \
             -Dlcms2_LIBRARY="${LCMS2_PREFIX}/lib/liblcms2.a" \
-            -DCMAKE_PREFIX_PATH="${PNG_PREFIX};${TIFF_PREFIX};${LCMS2_PREFIX}" \
-            -DCMAKE_EXE_LINKER_FLAGS="-L${PNG_PREFIX}/lib -L${TIFF_PREFIX}/lib -L${LCMS2_PREFIX}/lib" \
+            -DCMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH_VALUE}" \
+            -DCMAKE_EXE_LINKER_FLAGS="${LINKER_FLAGS}" \
             -Wno-dev
 
       - working-directory: openjpeg
