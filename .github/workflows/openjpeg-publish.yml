@@ -20,16 +20,21 @@ jobs:
         include:
           - artifact_arch: arm64
             arch: arm64
+            macos_min: '11.0'
             runner: macos-latest
           - artifact_arch: x64
             arch: x86_64
+            macos_min: '10.13'
             runner: macos-15-intel
+
+    env:
+      MACOS_MIN: ${{ matrix.macos_min }}
+      OPENJPEG_ARTIFACT_ARCH: ${{ matrix.artifact_arch }}
+      OPENJPEG_BUILD_ARCH: ${{ matrix.arch }}
+      OPENJPEG_REF: ${{ github.event.inputs.tag }}
 
     steps:
       - uses: actions/checkout@v4
-
-      # openssl@3 cmake already available in macos-latest
-      - run: brew install libpng libtiff little-cms2 zstd jpeg-turbo xz
 
       - uses: actions/checkout@v4
         with:
@@ -37,24 +42,145 @@ jobs:
           ref: ${{ github.event.inputs.tag }}
           path: openjpeg
 
-      - working-directory: openjpeg
-        run: mkdir -p output
-
-      - working-directory: openjpeg
+      - name: Build self-contained openjpeg tools
+        working-directory: openjpeg
+        shell: bash
         run: |
-          cmake -S . -B build \
+          set -euo pipefail
+
+          ROOT="$(pwd)"
+          BUILD_DIR="$ROOT/build"
+          DIST_DIR="${{ github.workspace }}/dist/openjpeg-${OPENJPEG_REF}-macos-${OPENJPEG_ARTIFACT_ARCH}"
+
+          rm -rf "$BUILD_DIR" "$DIST_DIR"
+          mkdir -p "$DIST_DIR"
+
+          cmake -S . -B "$BUILD_DIR" \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
+            -DCMAKE_OSX_ARCHITECTURES="${OPENJPEG_BUILD_ARCH}" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="${MACOS_MIN}" \
             -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_STATIC_LIBS=ON \
+            -DBUILD_CODEC=ON \
+            -DBUILD_JPIP=OFF \
+            -DBUILD_JPIP_SERVER=OFF \
+            -DBUILD_JAVA=OFF \
+            -DBUILD_VIEWER=OFF \
+            -DBUILD_MJ2=OFF \
+            -DBUILD_JPWL=OFF \
             -DBUILD_THIRDPARTY=ON \
             -DBUILD_DOC=OFF \
             -DBUILD_TESTING=OFF \
             -Wno-dev
 
-      - working-directory: openjpeg
-        run: cmake --build build --config Release --verbose
+          cmake --build "$BUILD_DIR" --config Release --parallel --verbose
 
-      - run: zip -r "openjpeg-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}.zip" openjpeg
+          OPJ_COMPRESS="$(find "$BUILD_DIR" -type f -name opj_compress | head -n1)"
+          OPJ_DECOMPRESS="$(find "$BUILD_DIR" -type f -name opj_decompress | head -n1)"
+          OPJ_DUMP="$(find "$BUILD_DIR" -type f -name opj_dump | head -n1)"
+
+          test -n "$OPJ_COMPRESS"
+          test -n "$OPJ_DECOMPRESS"
+          test -n "$OPJ_DUMP"
+
+          cp "$OPJ_COMPRESS" "$DIST_DIR/opj_compress"
+          cp "$OPJ_DECOMPRESS" "$DIST_DIR/opj_decompress"
+          cp "$OPJ_DUMP" "$DIST_DIR/opj_dump"
+          chmod +x "$DIST_DIR/opj_compress" "$DIST_DIR/opj_decompress" "$DIST_DIR/opj_dump"
+
+          strip -x "$DIST_DIR/opj_compress" "$DIST_DIR/opj_decompress" "$DIST_DIR/opj_dump" || true
+
+          echo "==> Verifying linked dylibs"
+          otool -L "$DIST_DIR/opj_compress" "$DIST_DIR/opj_decompress" "$DIST_DIR/opj_dump"
+
+          if otool -L "$DIST_DIR/opj_compress" "$DIST_DIR/opj_decompress" "$DIST_DIR/opj_dump" | grep -E '/opt/homebrew|/usr/local/(Cellar|opt)' >/dev/null; then
+            echo "ERROR: Homebrew runtime dependency leaked into final openjpeg binaries"
+            exit 1
+          fi
+
+      - name: Assemble license notices
+        working-directory: openjpeg
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DIST_DIR="${{ github.workspace }}/dist/openjpeg-${OPENJPEG_REF}-macos-${OPENJPEG_ARTIFACT_ARCH}"
+          LICENSES_MD="$DIST_DIR/LICENSES-ALL.md"
+
+          ZLIB_VERSION="$(awk '/^#define ZLIB_VERSION / { gsub(/"/, "", $3); print $3; exit }' thirdparty/libz/zlib.h)"
+          LIBPNG_VERSION="$(awk '/^#define PNG_LIBPNG_VER_STRING / { gsub(/"/, "", $3); print $3; exit }' thirdparty/libpng/png.h)"
+          LIBTIFF_VERSION="$(awk '/TIFFLIB_VERSION_STR/ && match($0, /Version [0-9.]+/) { print substr($0, RSTART + 8, RLENGTH - 8); exit }' thirdparty/libtiff/tiffvers.h 2>/dev/null || true)"
+          if [ -z "$LIBTIFF_VERSION" ]; then
+            LIBTIFF_VERSION="$(awk '/TIFFLIB_VERSION_STR/ && match($0, /Version [0-9.]+/) { print substr($0, RSTART + 8, RLENGTH - 8); exit }' thirdparty/libtiff/tiffvers.h.in)"
+          fi
+          LCMS2_VERSION="$(
+            awk '
+              /^#define LCMS_VERSION / {
+                major = int($3 / 1000)
+                minor = int(($3 % 1000) / 10)
+                patch = $3 % 10
+                printf "%d.%d.%d\n", major, minor, patch
+                exit
+              }
+            ' thirdparty/liblcms2/include/lcms2.h
+          )"
+
+          : > "$LICENSES_MD"
+
+          printf '### License: BSD-2-Clause\n' >> "$LICENSES_MD"
+          printf '#### Used by: [openjpeg %s](https://github.com/uclouvain/openjpeg)\n' "$OPENJPEG_REF" >> "$LICENSES_MD"
+          printf '#### License text\n```\n' >> "$LICENSES_MD"
+          cat LICENSE >> "$LICENSES_MD"
+          printf '\n```\n\n' >> "$LICENSES_MD"
+
+          printf '### License: Zlib\n' >> "$LICENSES_MD"
+          printf '#### Used by: [zlib %s](https://zlib.net/)\n' "$ZLIB_VERSION" >> "$LICENSES_MD"
+          printf '#### License text\n```\n' >> "$LICENSES_MD"
+          awk '
+            BEGIN { in_comment = 0 }
+            /^[[:space:]]*\/\*/ { in_comment = 1 }
+            in_comment { print }
+            /\*\// && in_comment { exit }
+          ' thirdparty/libz/zlib.h >> "$LICENSES_MD"
+          printf '\n```\n\n' >> "$LICENSES_MD"
+
+          printf '### License: Libpng\n' >> "$LICENSES_MD"
+          printf '#### Used by: [libpng %s](https://github.com/pnggroup/libpng)\n' "$LIBPNG_VERSION" >> "$LICENSES_MD"
+          printf '#### License text\n```\n' >> "$LICENSES_MD"
+          cat thirdparty/libpng/LICENSE >> "$LICENSES_MD"
+          printf '\n```\n\n' >> "$LICENSES_MD"
+
+          printf '### License: libtiff\n' >> "$LICENSES_MD"
+          printf '#### Used by: [libtiff %s](https://gitlab.com/libtiff/libtiff)\n' "$LIBTIFF_VERSION" >> "$LICENSES_MD"
+          printf '#### License text\n```\n' >> "$LICENSES_MD"
+          cat thirdparty/libtiff/COPYRIGHT >> "$LICENSES_MD"
+          printf '\n```\n\n' >> "$LICENSES_MD"
+
+          printf '### License: MIT\n' >> "$LICENSES_MD"
+          printf '#### Used by: [lcms2 %s](https://github.com/mm2/Little-CMS)\n' "$LCMS2_VERSION" >> "$LICENSES_MD"
+          printf '#### License text\n```\n' >> "$LICENSES_MD"
+          if [ -s thirdparty/liblcms2/COPYING ]; then
+            cat thirdparty/liblcms2/COPYING >> "$LICENSES_MD"
+          else
+            awk '
+              BEGIN { in_comment = 0 }
+              /^[[:space:]]*\/\*/ { in_comment = 1 }
+              in_comment { print }
+              /\*\// && in_comment { exit }
+            ' thirdparty/liblcms2/include/lcms2.h >> "$LICENSES_MD"
+          fi
+          printf '\n```\n' >> "$LICENSES_MD"
+
+          test -s "$LICENSES_MD"
+
+      - name: Package artifact
+        run: |
+          zip -X -j \
+            "openjpeg-${OPENJPEG_REF}-macos-${OPENJPEG_ARTIFACT_ARCH}.zip" \
+            "dist/openjpeg-${OPENJPEG_REF}-macos-${OPENJPEG_ARTIFACT_ARCH}/opj_compress" \
+            "dist/openjpeg-${OPENJPEG_REF}-macos-${OPENJPEG_ARTIFACT_ARCH}/opj_decompress" \
+            "dist/openjpeg-${OPENJPEG_REF}-macos-${OPENJPEG_ARTIFACT_ARCH}/opj_dump" \
+            "dist/openjpeg-${OPENJPEG_REF}-macos-${OPENJPEG_ARTIFACT_ARCH}/LICENSES-ALL.md"
 
       - name: Upload package
         uses: actions/upload-artifact@v4
