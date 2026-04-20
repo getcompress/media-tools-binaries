@@ -94,46 +94,16 @@ jobs:
           LICENSES_MD="$DIST_DIR/LICENSES-ALL.md"
           SAFE_REF="${GIFSICLE_REF//\//-}"
           SOURCE_TARBALL="$DIST_DIR/gifsicle-${SAFE_REF}-source.tar.gz"
-          README_LICENSE_NOTICE="$DIST_DIR/.gifsicle-license-notice.txt"
-          CLP_LICENSE_NOTICE="$DIST_DIR/.clp-license-notice.txt"
 
-          test -s README.md
           test -s COPYING
-
-          awk '
-            /^Copyright\/License$/ { in_section = 1 }
-            /^Authors$/ && in_section { exit }
-            in_section { print }
-          ' README.md > "$README_LICENSE_NOTICE"
-
-          test -s "$README_LICENSE_NOTICE"
 
           : > "$LICENSES_MD"
 
-          printf '### License: GPL-2.0-only OR custom alternative license\n' >> "$LICENSES_MD"
+          printf '### License: GPL-2.0-only\n' >> "$LICENSES_MD"
           printf '#### Used by: [gifsicle %s](https://github.com/kohler/gifsicle)\n' "$GIFSICLE_REF" >> "$LICENSES_MD"
           printf '#### License text\n```\n' >> "$LICENSES_MD"
-          cat "$README_LICENSE_NOTICE" >> "$LICENSES_MD"
-          printf '\n\n--- COPYING ---\n\n' >> "$LICENSES_MD"
           cat COPYING >> "$LICENSES_MD"
-          printf '\n```\n\n' >> "$LICENSES_MD"
-
-          if [ -s include/lcdf/clp.h ]; then
-            awk '
-              BEGIN { in_comment = 0 }
-              /^[[:space:]]*\/\*/ { in_comment = 1 }
-              in_comment { print }
-              /\*\// && in_comment { exit }
-            ' include/lcdf/clp.h > "$CLP_LICENSE_NOTICE"
-
-            if [ -s "$CLP_LICENSE_NOTICE" ]; then
-              printf '### License: GPL-2.0-only OR Click License OR custom alternative license\n' >> "$LICENSES_MD"
-              printf '#### Used by: [bundled lcdf/clp command line parser in gifsicle %s](https://github.com/kohler/gifsicle)\n' "$GIFSICLE_REF" >> "$LICENSES_MD"
-              printf '#### License text\n```\n' >> "$LICENSES_MD"
-              cat "$CLP_LICENSE_NOTICE" >> "$LICENSES_MD"
-              printf '\n```\n\n' >> "$LICENSES_MD"
-            fi
-          fi
+          printf '\n```\n' >> "$LICENSES_MD"
 
           git archive --format=tar --prefix="gifsicle-${SAFE_REF}-source/" HEAD | gzip -n > "$SOURCE_TARBALL"
 
