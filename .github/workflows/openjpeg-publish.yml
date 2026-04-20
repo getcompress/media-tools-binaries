@@ -153,7 +153,12 @@ jobs:
           printf '### License: libtiff\n' >> "$LICENSES_MD"
           printf '#### Used by: [libtiff %s](https://gitlab.com/libtiff/libtiff)\n' "$LIBTIFF_VERSION" >> "$LICENSES_MD"
           printf '#### License text\n```\n' >> "$LICENSES_MD"
-          cat thirdparty/libtiff/COPYRIGHT >> "$LICENSES_MD"
+          awk '
+            BEGIN { in_comment = 0 }
+            /^[[:space:]]*\/\*/ { in_comment = 1 }
+            in_comment { print }
+            /\*\// && in_comment { exit }
+          ' thirdparty/libtiff/tiff.h >> "$LICENSES_MD"
           printf '\n```\n\n' >> "$LICENSES_MD"
 
           printf '### License: MIT\n' >> "$LICENSES_MD"
