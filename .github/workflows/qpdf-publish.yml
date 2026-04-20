@@ -21,25 +21,33 @@ jobs:
         include:
           - artifact_arch: arm64
             arch: arm64
+            macos_min: '11.0'
             openssl_configure_target: darwin64-arm64-cc
             runner: macos-latest
           - artifact_arch: x64
             arch: x86_64
+            macos_min: '10.13'
             openssl_configure_target: darwin64-x86_64-cc
             runner: macos-15-intel
 
     env:
       ARCH: ${{ matrix.arch }}
       OPENSSL_CONFIGURE_TARGET: ${{ matrix.openssl_configure_target }}
-      MACOS_MIN: '11.0'
+      MACOS_MIN: ${{ matrix.macos_min }}
+      JPEG_TURBO_VERSION: '3.1.4.1'
       OPENSSL_VERSION: '3.6.2'
+      QPDF_REF: ${{ github.event.inputs.tag }}
+      ZLIB_VERSION: '1.3.1'
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install build deps
+        shell: bash
         run: |
-          brew install jpeg-turbo
+          if [ "$ARCH" = "x86_64" ]; then
+            brew install nasm
+          fi
 
       - name: Checkout qpdf
         uses: actions/checkout@v4
@@ -58,14 +66,51 @@ jobs:
           BUILD_DIR="$ROOT/build"
           DIST_DIR="$ROOT/output"
           DEPS_DIR="$ROOT/.deps-macos-${ARCH}"
+          ZLIB_SRC_DIR="$DEPS_DIR/src/zlib-${ZLIB_VERSION}"
+          ZLIB_PREFIX="$DEPS_DIR/zlib"
+          JPEG_TURBO_SRC_DIR="$DEPS_DIR/src/libjpeg-turbo-${JPEG_TURBO_VERSION}"
+          JPEG_TURBO_PREFIX="$DEPS_DIR/jpeg-turbo"
           OPENSSL_SRC_DIR="$DEPS_DIR/src/openssl-${OPENSSL_VERSION}"
           OPENSSL_PREFIX="$DEPS_DIR/openssl"
-          JPEG_TURBO_PREFIX="$(brew --prefix jpeg-turbo)"
 
           rm -rf "$BUILD_DIR" "$DIST_DIR" "$DEPS_DIR"
-          mkdir -p "$DIST_DIR" "$DEPS_DIR/src"
+          mkdir -p "$DIST_DIR" "$DEPS_DIR/src" "$DEPS_DIR/build"
 
-          rm -f "${JPEG_TURBO_PREFIX}/lib/"*.dylib || true
+          echo "==> Downloading zlib ${ZLIB_VERSION}"
+          curl -fL \
+            "https://github.com/madler/zlib/releases/download/v${ZLIB_VERSION}/zlib-${ZLIB_VERSION}.tar.gz" \
+            -o "$DEPS_DIR/src/zlib.tar.gz"
+
+          tar -xzf "$DEPS_DIR/src/zlib.tar.gz" -C "$DEPS_DIR/src"
+
+          echo "==> Building zlib (static)"
+          cmake -S "$ZLIB_SRC_DIR" -B "$DEPS_DIR/build/zlib" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="${ARCH}" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="${MACOS_MIN}" \
+            -DCMAKE_INSTALL_PREFIX="$ZLIB_PREFIX" \
+            -DBUILD_SHARED_LIBS=OFF
+          cmake --build "$DEPS_DIR/build/zlib" --config Release --parallel
+          cmake --install "$DEPS_DIR/build/zlib" --config Release
+
+          echo "==> Downloading libjpeg-turbo ${JPEG_TURBO_VERSION}"
+          curl -fL \
+            "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${JPEG_TURBO_VERSION}/libjpeg-turbo-${JPEG_TURBO_VERSION}.tar.gz" \
+            -o "$DEPS_DIR/src/libjpeg-turbo.tar.gz"
+
+          tar -xzf "$DEPS_DIR/src/libjpeg-turbo.tar.gz" -C "$DEPS_DIR/src"
+
+          echo "==> Building libjpeg-turbo (static)"
+          cmake -S "$JPEG_TURBO_SRC_DIR" -B "$DEPS_DIR/build/libjpeg-turbo" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="${ARCH}" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="${MACOS_MIN}" \
+            -DCMAKE_INSTALL_PREFIX="$JPEG_TURBO_PREFIX" \
+            -DWITH_JPEG8=1 \
+            -DENABLE_SHARED=OFF \
+            -DENABLE_STATIC=ON
+          cmake --build "$DEPS_DIR/build/libjpeg-turbo" --config Release --parallel
+          cmake --install "$DEPS_DIR/build/libjpeg-turbo" --config Release
 
           echo "==> Downloading OpenSSL ${OPENSSL_VERSION}"
           curl -fL \
@@ -97,16 +142,18 @@ jobs:
             -DINSTALL_EXAMPLES=OFF \
             -DINSTALL_PKGCONFIG=OFF \
             -DINSTALL_CMAKE_PACKAGE=OFF \
+            -DZOPFLI=OFF \
             -DUSE_IMPLICIT_CRYPTO=0 \
             -DREQUIRE_CRYPTO_NATIVE=ON \
             -DREQUIRE_CRYPTO_OPENSSL=ON \
             -DDEFAULT_CRYPTO=native \
             -DOPENSSL_USE_STATIC_LIBS=TRUE \
-            -DCMAKE_PREFIX_PATH="${JPEG_TURBO_PREFIX};${OPENSSL_PREFIX}" \
+            -DZLIB_ROOT="${ZLIB_PREFIX}" \
+            -DCMAKE_PREFIX_PATH="${JPEG_TURBO_PREFIX};${OPENSSL_PREFIX};${ZLIB_PREFIX}" \
             -DCMAKE_FIND_LIBRARY_SUFFIXES=".a" \
             -DCMAKE_FIND_FRAMEWORK=LAST \
             -DCMAKE_FIND_APPBUNDLE=NEVER \
-            -DCMAKE_EXE_LINKER_FLAGS="-L${JPEG_TURBO_PREFIX}/lib -L${OPENSSL_PREFIX}/lib -Wl,-dead_strip"
+            -DCMAKE_EXE_LINKER_FLAGS="-L${JPEG_TURBO_PREFIX}/lib -L${OPENSSL_PREFIX}/lib -L${ZLIB_PREFIX}/lib -Wl,-dead_strip"
 
           echo "==> Building qpdf"
           cmake --build "$BUILD_DIR" --config Release --parallel --target qpdf
@@ -119,21 +166,98 @@ jobs:
           strip -x "$DIST_DIR/qpdf" || true
 
           echo "==> Verifying crypto providers"
-          "$DIST_DIR/qpdf" --show-crypto | tee "$DIST_DIR/crypto-providers.txt"
+          "$DIST_DIR/qpdf" --show-crypto | tee "$BUILD_DIR/crypto-providers.txt"
 
           echo "==> Verifying linked dylibs"
-          otool -L "$DIST_DIR/qpdf" | tee "$DIST_DIR/linked-libraries.txt"
+          otool -L "$DIST_DIR/qpdf" | tee "$BUILD_DIR/linked-libraries.txt"
 
           if otool -L "$DIST_DIR/qpdf" | grep -E '/opt/homebrew|/usr/local/(Cellar|opt)' >/dev/null; then
             echo "ERROR: Homebrew runtime dependency leaked into final qpdf binary"
             exit 1
           fi
 
+      - name: Assemble license notices
+        working-directory: qpdf
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DIST_DIR="$PWD/output"
+          DEPS_DIR="$PWD/.deps-macos-${ARCH}"
+          ZLIB_SRC_DIR="$DEPS_DIR/src/zlib-${ZLIB_VERSION}"
+          JPEG_TURBO_SRC_DIR="$DEPS_DIR/src/libjpeg-turbo-${JPEG_TURBO_VERSION}"
+          OPENSSL_SRC_DIR="$DEPS_DIR/src/openssl-${OPENSSL_VERSION}"
+          ZLIB_H="$ZLIB_SRC_DIR/zlib.h"
+          ZLIB_VERSION="$(awk '/^#define ZLIB_VERSION / { gsub(/"/, "", $3); print $3; exit }' "$ZLIB_H")"
+          LICENSES_MD="$DIST_DIR/LICENSES-ALL.md"
+
+          test -s LICENSE.txt
+          test -s "$OPENSSL_SRC_DIR/LICENSE.txt"
+          test -s "$JPEG_TURBO_SRC_DIR/LICENSE.md"
+          test -s "$ZLIB_H"
+
+          : > "$LICENSES_MD"
+
+          printf '### License: Apache-2.0\n' >> "$LICENSES_MD"
+          printf '#### Used by: [qpdf %s](https://github.com/qpdf/qpdf)\n' "$QPDF_REF" >> "$LICENSES_MD"
+          printf '#### License text\n```\n' >> "$LICENSES_MD"
+          cat LICENSE.txt >> "$LICENSES_MD"
+          if [ -s NOTICE.md ]; then
+            printf '\n\n--- NOTICE.md ---\n\n' >> "$LICENSES_MD"
+            cat NOTICE.md >> "$LICENSES_MD"
+          elif [ -s NOTICE ]; then
+            printf '\n\n--- NOTICE ---\n\n' >> "$LICENSES_MD"
+            cat NOTICE >> "$LICENSES_MD"
+          fi
+          printf '\n```\n\n' >> "$LICENSES_MD"
+
+          if [ -s Artistic-2.0 ]; then
+            printf '### License: Artistic-2.0\n' >> "$LICENSES_MD"
+            printf '#### Used by: [qpdf %s](https://github.com/qpdf/qpdf)\n' "$QPDF_REF" >> "$LICENSES_MD"
+            printf '#### License text\n```\n' >> "$LICENSES_MD"
+            cat Artistic-2.0 >> "$LICENSES_MD"
+            printf '\n```\n\n' >> "$LICENSES_MD"
+          fi
+
+          printf '### License: Apache-2.0\n' >> "$LICENSES_MD"
+          printf '#### Used by: [OpenSSL %s](https://github.com/openssl/openssl)\n' "$OPENSSL_VERSION" >> "$LICENSES_MD"
+          printf '#### License text\n```\n' >> "$LICENSES_MD"
+          cat "$OPENSSL_SRC_DIR/LICENSE.txt" >> "$LICENSES_MD"
+          if [ -s "$OPENSSL_SRC_DIR/NOTICE.txt" ]; then
+            printf '\n\n--- NOTICE.txt ---\n\n' >> "$LICENSES_MD"
+            cat "$OPENSSL_SRC_DIR/NOTICE.txt" >> "$LICENSES_MD"
+          fi
+          printf '\n```\n\n' >> "$LICENSES_MD"
+
+          printf '### License: IJG AND Zlib AND BSD-3-Clause\n' >> "$LICENSES_MD"
+          printf '#### Used by: [libjpeg-turbo %s](https://github.com/libjpeg-turbo/libjpeg-turbo)\n' "$JPEG_TURBO_VERSION" >> "$LICENSES_MD"
+          printf '#### License text\n```\n' >> "$LICENSES_MD"
+          cat "$JPEG_TURBO_SRC_DIR/LICENSE.md" >> "$LICENSES_MD"
+          if [ -s "$JPEG_TURBO_SRC_DIR/README.ijg" ]; then
+            printf '\n\n--- README.ijg ---\n\n' >> "$LICENSES_MD"
+            cat "$JPEG_TURBO_SRC_DIR/README.ijg" >> "$LICENSES_MD"
+          fi
+          printf '\n```\n\n' >> "$LICENSES_MD"
+
+          printf '### License: Zlib\n' >> "$LICENSES_MD"
+          printf '#### Used by: [zlib %s](https://zlib.net/)\n' "$ZLIB_VERSION" >> "$LICENSES_MD"
+          printf '#### License text\n```\n' >> "$LICENSES_MD"
+          awk '
+            BEGIN { in_comment = 0 }
+            /^[[:space:]]*\/\*/ { in_comment = 1 }
+            in_comment { print }
+            /\*\// && in_comment { exit }
+          ' "$ZLIB_H" >> "$LICENSES_MD"
+          printf '\n```\n' >> "$LICENSES_MD"
+
+          test -s "$LICENSES_MD"
+
       - name: Package artifact
         run: |
-          ditto -c -k --sequesterRsrc --keepParent \
-            "qpdf/output" \
-            "qpdf-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}.zip"
+          zip -X -j \
+            "qpdf-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}.zip" \
+            "qpdf/output/qpdf" \
+            "qpdf/output/LICENSES-ALL.md"
 
       - name: Upload package
         uses: actions/upload-artifact@v4
