@@ -9,9 +9,22 @@ on:
         type: string
 
 jobs:
-  build-release:
-    runs-on: macos-latest
-    permissions: { contents: write }
+  build:
+    name: build-${{ matrix.artifact_arch }}
+    runs-on: ${{ matrix.runner }}
+    permissions: { contents: read }
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact_arch: arm64
+            arch: arm64
+            runner: macos-latest
+          - artifact_arch: x64
+            arch: x86_64
+            runner: macos-15-intel
+
     steps:
       - uses: actions/checkout@v4
 
@@ -32,6 +45,8 @@ jobs:
       - working-directory: gifsicle
         run: |
           ./configure \
+            CFLAGS="-arch ${{ matrix.arch }}" \
+            LDFLAGS="-arch ${{ matrix.arch }}" \
             --disable-dependency-tracking \
             --prefix="${{ github.workspace }}/gifsicle/output" \
             --disable-gifview --disable-gifdiff
@@ -39,10 +54,31 @@ jobs:
       - working-directory: gifsicle
         run: make install
 
-      - run: zip -r "gifsicle-${{ github.event.inputs.tag }}.zip" gifsicle
+      - run: zip -r "gifsicle-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}.zip" gifsicle
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: gifsicle-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}
+          path: gifsicle-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}.zip
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: gifsicle-${{ github.event.inputs.tag }}-macos-*
+          path: release
+          merge-multiple: true
 
       - uses: ncipollo/release-action@v1
         with:
           tag: gifsicle-${{ github.event.inputs.tag }}
           name: gifsicle-${{ github.event.inputs.tag }}
-          artifacts: '*.zip'
+          artifacts: 'release/*.zip'
+          artifactErrorsFailBuild: true

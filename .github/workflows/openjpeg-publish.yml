@@ -9,9 +9,22 @@ on:
         type: string
 
 jobs:
-  build-release:
-    runs-on: macos-latest
-    permissions: { contents: write }
+  build:
+    name: build-${{ matrix.artifact_arch }}
+    runs-on: ${{ matrix.runner }}
+    permissions: { contents: read }
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact_arch: arm64
+            arch: arm64
+            runner: macos-latest
+          - artifact_arch: x64
+            arch: x86_64
+            runner: macos-15-intel
+
     steps:
       - uses: actions/checkout@v4
 
@@ -31,6 +44,7 @@ jobs:
         run: |
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
             -DBUILD_SHARED_LIBS=OFF \
             -DBUILD_THIRDPARTY=ON \
             -DBUILD_DOC=OFF \
@@ -40,11 +54,32 @@ jobs:
       - working-directory: openjpeg
         run: cmake --build build --config Release --verbose
 
-      - run: zip -r "openjpeg-${{ github.event.inputs.tag }}.zip" openjpeg
+      - run: zip -r "openjpeg-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}.zip" openjpeg
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: openjpeg-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}
+          path: openjpeg-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}.zip
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: openjpeg-${{ github.event.inputs.tag }}-macos-*
+          path: release
+          merge-multiple: true
 
       - uses: ncipollo/release-action@v1
         with:
           tag: openjpeg-${{ github.event.inputs.tag }}
           name: openjpeg-${{ github.event.inputs.tag }}
-          artifacts: 'openjpeg-${{ github.event.inputs.tag }}.zip'
+          artifacts: 'release/*.zip'
           allowUpdates: true
+          artifactErrorsFailBuild: true
