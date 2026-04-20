@@ -34,9 +34,9 @@ jobs:
       OPENJPEG_REF: ${{ github.event.inputs.tag }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: 'uclouvain/openjpeg'
           ref: ${{ github.event.inputs.tag }}
@@ -188,11 +188,11 @@ jobs:
             "dist/openjpeg-${OPENJPEG_REF}-macos-${OPENJPEG_ARTIFACT_ARCH}/LICENSES-ALL.md"
 
       - name: Upload package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: openjpeg-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}
           path: openjpeg-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}.zip
           if-no-files-found: error
+          archive: false
 
   publish:
     needs: build
@@ -201,13 +201,13 @@ jobs:
 
     steps:
       - name: Download packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
-          pattern: openjpeg-${{ github.event.inputs.tag }}-macos-*
+          pattern: openjpeg-${{ github.event.inputs.tag }}-macos-*.zip
           path: release
           merge-multiple: true
 
-      - uses: ncipollo/release-action@v1
+      - uses: ncipollo/release-action@v1.21.0
         with:
           tag: openjpeg-${{ github.event.inputs.tag }}
           name: openjpeg-${{ github.event.inputs.tag }}

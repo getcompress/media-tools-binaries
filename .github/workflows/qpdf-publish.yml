@@ -38,14 +38,14 @@ jobs:
       QPDF_REF: ${{ github.event.inputs.tag }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install build deps
         run: |
           brew install jpeg-turbo
 
       - name: Checkout qpdf
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: qpdf/qpdf
           ref: ${{ github.event.inputs.tag }}
@@ -216,11 +216,11 @@ jobs:
             "qpdf/output/LICENSES-ALL.md"
 
       - name: Upload package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: qpdf-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}
           path: qpdf-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}.zip
           if-no-files-found: error
+          archive: false
 
   publish:
     needs: build
@@ -230,13 +230,13 @@ jobs:
 
     steps:
       - name: Download packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
-          pattern: qpdf-${{ github.event.inputs.tag }}-macos-*
+          pattern: qpdf-${{ github.event.inputs.tag }}-macos-*.zip
           path: release
           merge-multiple: true
 
-      - uses: ncipollo/release-action@v1
+      - uses: ncipollo/release-action@v1.21.0
         with:
           tag: qpdf-${{ github.event.inputs.tag }}
           name: qpdf-${{ github.event.inputs.tag }}
