@@ -9,13 +9,28 @@ on:
         type: string
 
 jobs:
-  build-release:
-    runs-on: macos-latest
+  build:
+    name: build-${{ matrix.artifact_arch }}
+    runs-on: ${{ matrix.runner }}
     permissions:
-      contents: write
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact_arch: arm64
+            arch: arm64
+            openssl_configure_target: darwin64-arm64-cc
+            runner: macos-latest
+          - artifact_arch: x64
+            arch: x86_64
+            openssl_configure_target: darwin64-x86_64-cc
+            runner: macos-15-intel
 
     env:
-      ARCH: arm64
+      ARCH: ${{ matrix.arch }}
+      OPENSSL_CONFIGURE_TARGET: ${{ matrix.openssl_configure_target }}
       MACOS_MIN: '11.0'
       OPENSSL_VERSION: '3.6.2'
 
@@ -62,7 +77,7 @@ jobs:
           echo "==> Building OpenSSL (static, no modules)"
           pushd "$OPENSSL_SRC_DIR" >/dev/null
           export MACOSX_DEPLOYMENT_TARGET="${MACOS_MIN}"
-          perl ./Configure darwin64-arm64-cc \
+          perl ./Configure "${OPENSSL_CONFIGURE_TARGET}" \
             no-shared \
             no-module \
             no-tests \
@@ -118,12 +133,33 @@ jobs:
         run: |
           ditto -c -k --sequesterRsrc --keepParent \
             "qpdf/output" \
-            "qpdf-${{ github.event.inputs.tag }}-macos-arm64.zip"
+            "qpdf-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}.zip"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: qpdf-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}
+          path: qpdf-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}.zip
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: qpdf-${{ github.event.inputs.tag }}-macos-*
+          path: release
+          merge-multiple: true
 
       - uses: ncipollo/release-action@v1
         with:
           tag: qpdf-${{ github.event.inputs.tag }}
           name: qpdf-${{ github.event.inputs.tag }}
-          artifacts: qpdf-${{ github.event.inputs.tag }}-macos-arm64.zip
+          artifacts: release/*.zip
           allowUpdates: true
           artifactErrorsFailBuild: true
