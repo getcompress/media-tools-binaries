@@ -1,4 +1,4 @@
-name: 'qpdf-publish'
+name: qpdf-publish
 
 on:
   workflow_dispatch:
@@ -11,49 +11,119 @@ on:
 jobs:
   build-release:
     runs-on: macos-latest
-    permissions: { contents: write }
+    permissions:
+      contents: write
+
+    env:
+      ARCH: arm64
+      MACOS_MIN: '11.0'
+      OPENSSL_VERSION: '3.6.2'
+
     steps:
       - uses: actions/checkout@v4
 
-      # openssl@3 cmake already available in macos-latest
-      - run: brew install jpeg-turbo
+      - name: Install build deps
+        run: |
+          brew install jpeg-turbo
 
-      - uses: actions/checkout@v4
+      - name: Checkout qpdf
+        uses: actions/checkout@v4
         with:
-          repository: 'qpdf/qpdf'
+          repository: qpdf/qpdf
           ref: ${{ github.event.inputs.tag }}
           path: qpdf
 
-      - working-directory: qpdf
-        run: mkdir -p output
-
-      - working-directory: qpdf
+      - name: Build self-contained qpdf
+        working-directory: qpdf
+        shell: bash
         run: |
-          JPEG_TURBO_PREFIX=$(brew --prefix jpeg-turbo)
-          OPENSSL_PREFIX=$(brew --prefix openssl@3)
-          
-          rm -rf "${JPEG_TURBO_PREFIX}/lib/"*.dylib
-          rm -rf "${OPENSSL_PREFIX}/lib/"*.dylib
-          
-          cmake -S . -B build \
+          set -euo pipefail
+
+          ROOT="$(pwd)"
+          BUILD_DIR="$ROOT/build"
+          DIST_DIR="$ROOT/output"
+          DEPS_DIR="$ROOT/.deps-macos-${ARCH}"
+          OPENSSL_SRC_DIR="$DEPS_DIR/src/openssl-${OPENSSL_VERSION}"
+          OPENSSL_PREFIX="$DEPS_DIR/openssl"
+          JPEG_TURBO_PREFIX="$(brew --prefix jpeg-turbo)"
+
+          rm -rf "$BUILD_DIR" "$DIST_DIR" "$DEPS_DIR"
+          mkdir -p "$DIST_DIR" "$DEPS_DIR/src"
+
+          rm -f "${JPEG_TURBO_PREFIX}/lib/"*.dylib || true
+
+          echo "==> Downloading OpenSSL ${OPENSSL_VERSION}"
+          curl -fL \
+            "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" \
+            -o "$DEPS_DIR/src/openssl.tar.gz"
+
+          tar -xzf "$DEPS_DIR/src/openssl.tar.gz" -C "$DEPS_DIR/src"
+
+          echo "==> Building OpenSSL (static, no modules)"
+          pushd "$OPENSSL_SRC_DIR" >/dev/null
+          export MACOSX_DEPLOYMENT_TARGET="${MACOS_MIN}"
+          perl ./Configure darwin64-arm64-cc \
+            no-shared \
+            no-module \
+            no-tests \
+            --prefix="$OPENSSL_PREFIX"
+          make -j"$(sysctl -n hw.ncpu)"
+          make install_sw
+          popd >/dev/null
+
+          echo "==> Configuring qpdf"
+          cmake -S . -B "$BUILD_DIR" \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_ARCHITECTURES="arm64" \
+            -DCMAKE_OSX_ARCHITECTURES="${ARCH}" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="${MACOS_MIN}" \
             -DBUILD_SHARED_LIBS=OFF \
-            -DBUILD_STATIC_LIBS=1 \
+            -DBUILD_STATIC_LIBS=ON \
+            -DBUILD_DOC=OFF \
+            -DINSTALL_EXAMPLES=OFF \
+            -DINSTALL_PKGCONFIG=OFF \
+            -DINSTALL_CMAKE_PACKAGE=OFF \
             -DUSE_IMPLICIT_CRYPTO=0 \
-            -DREQUIRE_CRYPTO_OPENSSL=1 \
+            -DREQUIRE_CRYPTO_NATIVE=ON \
+            -DREQUIRE_CRYPTO_OPENSSL=ON \
+            -DDEFAULT_CRYPTO=native \
+            -DOPENSSL_USE_STATIC_LIBS=TRUE \
             -DCMAKE_PREFIX_PATH="${JPEG_TURBO_PREFIX};${OPENSSL_PREFIX}" \
             -DCMAKE_FIND_LIBRARY_SUFFIXES=".a" \
-            -DCMAKE_EXE_LINKER_FLAGS="-L${JPEG_TURBO_PREFIX}/lib -L${OPENSSL_PREFIX}/lib"
+            -DCMAKE_FIND_FRAMEWORK=LAST \
+            -DCMAKE_FIND_APPBUNDLE=NEVER \
+            -DCMAKE_EXE_LINKER_FLAGS="-L${JPEG_TURBO_PREFIX}/lib -L${OPENSSL_PREFIX}/lib -Wl,-dead_strip"
 
-      - working-directory: qpdf
-        run: cmake --build build --config Release --verbose
+          echo "==> Building qpdf"
+          cmake --build "$BUILD_DIR" --config Release --parallel --target qpdf
 
-      - run: zip -r "qpdf-${{ github.event.inputs.tag }}.zip" qpdf
+          QPDF_BIN="$(find "$BUILD_DIR" -type f -name qpdf -perm -111 | head -n1)"
+          test -n "$QPDF_BIN"
+
+          cp "$QPDF_BIN" "$DIST_DIR/qpdf"
+          chmod +x "$DIST_DIR/qpdf"
+          strip -x "$DIST_DIR/qpdf" || true
+
+          echo "==> Verifying crypto providers"
+          "$DIST_DIR/qpdf" --show-crypto | tee "$DIST_DIR/crypto-providers.txt"
+
+          echo "==> Verifying linked dylibs"
+          otool -L "$DIST_DIR/qpdf" | tee "$DIST_DIR/linked-libraries.txt"
+
+          if otool -L "$DIST_DIR/qpdf" | grep -E '/opt/homebrew|/usr/local/(Cellar|opt)' >/dev/null; then
+            echo "ERROR: Homebrew runtime dependency leaked into final qpdf binary"
+            exit 1
+          fi
+
+      - name: Package artifact
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            "qpdf/output" \
+            "qpdf-${{ github.event.inputs.tag }}-macos-arm64.zip"
 
       - uses: ncipollo/release-action@v1
         with:
           tag: qpdf-${{ github.event.inputs.tag }}
           name: qpdf-${{ github.event.inputs.tag }}
-          artifacts: 'qpdf-${{ github.event.inputs.tag }}.zip'
+          artifacts: qpdf-${{ github.event.inputs.tag }}-macos-arm64.zip
           allowUpdates: true
+          artifactErrorsFailBuild: true
