@@ -1,0 +1,191 @@
+name: 'oxipng-publish'
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to clone'
+        required: true
+        type: string
+
+jobs:
+  build:
+    name: build-${{ matrix.artifact_arch }}
+    runs-on: ${{ matrix.runner }}
+    permissions: { contents: read }
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact_arch: arm64
+            arch: arm64
+            rust_target: aarch64-apple-darwin
+            macos_min: '11.0'
+            runner: macos-latest
+          - artifact_arch: x64
+            arch: x86_64
+            rust_target: x86_64-apple-darwin
+            macos_min: '10.13'
+            runner: macos-15-intel
+
+    env:
+      MACOS_MIN: ${{ matrix.macos_min }}
+      OXIPNG_ARTIFACT_ARCH: ${{ matrix.artifact_arch }}
+      OXIPNG_BUILD_ARCH: ${{ matrix.arch }}
+      OXIPNG_REF: ${{ github.event.inputs.tag }}
+      OXIPNG_RUST_TARGET: ${{ matrix.rust_target }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/checkout@v6
+        with:
+          repository: 'oxipng/oxipng'
+          ref: ${{ github.event.inputs.tag }}
+          path: oxipng
+
+      - name: Install license generator
+        shell: bash
+        run: cargo install cargo-about --version 0.8.4 --locked
+
+      - name: Build oxipng
+        working-directory: oxipng
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DIST_DIR="${{ github.workspace }}/dist/oxipng-${OXIPNG_REF}-macos-${OXIPNG_ARTIFACT_ARCH}"
+
+          rm -rf "$DIST_DIR"
+          mkdir -p "$DIST_DIR"
+
+          rustup target add "$OXIPNG_RUST_TARGET"
+
+          export MACOSX_DEPLOYMENT_TARGET="$MACOS_MIN"
+          export RUSTFLAGS="-C link-arg=-mmacosx-version-min=${MACOS_MIN}"
+
+          cargo build --release --locked --target "$OXIPNG_RUST_TARGET" --package oxipng --bin oxipng
+
+          cp "target/${OXIPNG_RUST_TARGET}/release/oxipng" "$DIST_DIR/oxipng"
+          chmod +x "$DIST_DIR/oxipng"
+          strip -x "$DIST_DIR/oxipng" || true
+
+          "$DIST_DIR/oxipng" --version
+
+          echo "==> Verifying binary architecture"
+          file "$DIST_DIR/oxipng"
+          if ! file "$DIST_DIR/oxipng" | grep -q "$OXIPNG_BUILD_ARCH"; then
+            echo "ERROR: oxipng binary architecture does not match ${OXIPNG_BUILD_ARCH}"
+            exit 1
+          fi
+
+          echo "==> Verifying linked dylibs"
+          otool -L "$DIST_DIR/oxipng"
+          if otool -L "$DIST_DIR/oxipng" | grep -E '/opt/homebrew|/usr/local/(Cellar|opt)' >/dev/null; then
+            echo "ERROR: Homebrew runtime dependency leaked into final oxipng binary"
+            exit 1
+          fi
+
+          echo "==> Verifying macOS deployment target"
+          DEPLOYMENT_INFO="$(vtool -show-build "$DIST_DIR/oxipng" 2>/dev/null || otool -l "$DIST_DIR/oxipng")"
+          echo "$DEPLOYMENT_INFO"
+          if [ "$OXIPNG_BUILD_ARCH" = "x86_64" ] && ! echo "$DEPLOYMENT_INFO" | grep -Eq 'minos 10\.13|version 10\.13'; then
+            echo "ERROR: expected x64 oxipng binary to target macOS 10.13"
+            exit 1
+          fi
+
+      - name: Assemble license notices
+        working-directory: oxipng
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DIST_DIR="${{ github.workspace }}/dist/oxipng-${OXIPNG_REF}-macos-${OXIPNG_ARTIFACT_ARCH}"
+          LICENSES_MD="$DIST_DIR/LICENSES-ALL.md"
+          ABOUT_CONFIG="$RUNNER_TEMP/oxipng-about.toml"
+          ABOUT_TEMPLATE="$RUNNER_TEMP/oxipng-licenses.hbs"
+
+          cat > "$ABOUT_CONFIG" <<'EOF'
+          accepted = [
+              "Apache-2.0",
+              "MIT",
+              "BSD-2-Clause",
+              "BSD-3-Clause",
+              "ISC",
+              "Zlib",
+              "Unicode-3.0",
+              "Unicode-DFS-2016",
+              "CC0-1.0",
+              "BSL-1.0",
+          ]
+
+          targets = [
+              "aarch64-apple-darwin",
+              "x86_64-apple-darwin",
+          ]
+
+          ignore-dev-dependencies = true
+          EOF
+
+          cat > "$ABOUT_TEMPLATE" <<'EOF'
+          {{#each licenses}}
+          ### License: {{name}}
+          #### Used by:
+          {{#each used_by}}
+          - [{{crate.name}} {{crate.version}}]({{#if crate.repository}}{{crate.repository}}{{else}}https://crates.io/crates/{{crate.name}}{{/if}})
+          {{/each}}
+          #### License text
+          ```
+          {{text}}
+          ```
+
+          {{/each}}
+          EOF
+
+          cargo about generate \
+            --config "$ABOUT_CONFIG" \
+            --manifest-path Cargo.toml \
+            --workspace \
+            --locked \
+            --fail \
+            --output-file "$LICENSES_MD" \
+            "$ABOUT_TEMPLATE"
+
+          test -s "$LICENSES_MD"
+
+      - name: Package artifact
+        run: |
+          zip -X -j \
+            "oxipng-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}.zip" \
+            "dist/oxipng-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}/oxipng" \
+            "dist/oxipng-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}/LICENSES-ALL.md"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v7
+        with:
+          path: oxipng-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}.zip
+          if-no-files-found: error
+          archive: false
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v8
+        with:
+          pattern: oxipng-${{ github.event.inputs.tag }}-macos-*.zip
+          path: release
+          merge-multiple: true
+          skip-decompress: true
+
+      - uses: ncipollo/release-action@v1.21.0
+        with:
+          tag: oxipng-${{ github.event.inputs.tag }}
+          name: oxipng-${{ github.event.inputs.tag }}
+          artifacts: 'release/*.zip'
+          allowUpdates: true
+          artifactErrorsFailBuild: true

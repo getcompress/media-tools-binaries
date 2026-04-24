@@ -1,0 +1,151 @@
+name: 'gifsicle-publish'
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to clone'
+        required: true
+        type: string
+
+jobs:
+  build:
+    name: build-${{ matrix.artifact_arch }}
+    runs-on: ${{ matrix.runner }}
+    permissions: { contents: read }
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact_arch: arm64
+            arch: arm64
+            macos_min: '11.0'
+            runner: macos-latest
+          - artifact_arch: x64
+            arch: x86_64
+            macos_min: '10.13'
+            runner: macos-15-intel
+
+    env:
+      GIFSICLE_ARTIFACT_ARCH: ${{ matrix.artifact_arch }}
+      GIFSICLE_BUILD_ARCH: ${{ matrix.arch }}
+      GIFSICLE_REF: ${{ github.event.inputs.tag }}
+      MACOS_MIN: ${{ matrix.macos_min }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install build deps
+        run: brew install automake autoconf
+
+      - name: Checkout gifsicle
+        uses: actions/checkout@v6
+        with:
+          repository: 'kohler/gifsicle'
+          ref: ${{ github.event.inputs.tag }}
+          path: gifsicle
+
+      - name: Build self-contained gifsicle
+        working-directory: gifsicle
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ROOT="$(pwd)"
+          DIST_DIR="${{ github.workspace }}/dist/gifsicle-${GIFSICLE_REF}-macos-${GIFSICLE_ARTIFACT_ARCH}"
+          INSTALL_DIR="$ROOT/output"
+
+          rm -rf "$DIST_DIR" "$INSTALL_DIR"
+          mkdir -p "$DIST_DIR" "$INSTALL_DIR"
+
+          ./bootstrap.sh
+
+          export MACOSX_DEPLOYMENT_TARGET="${MACOS_MIN}"
+          ./configure \
+            CFLAGS="-arch ${GIFSICLE_BUILD_ARCH} -mmacosx-version-min=${MACOS_MIN}" \
+            LDFLAGS="-arch ${GIFSICLE_BUILD_ARCH} -mmacosx-version-min=${MACOS_MIN}" \
+            --disable-dependency-tracking \
+            --prefix="$INSTALL_DIR" \
+            --disable-gifview --disable-gifdiff
+
+          make -j"$(sysctl -n hw.ncpu)"
+          make install
+
+          cp "$INSTALL_DIR/bin/gifsicle" "$DIST_DIR/gifsicle"
+          chmod +x "$DIST_DIR/gifsicle"
+          strip -x "$DIST_DIR/gifsicle" || true
+
+          echo "==> Verifying linked dylibs"
+          otool -L "$DIST_DIR/gifsicle"
+
+          if otool -L "$DIST_DIR/gifsicle" | grep -E '/opt/homebrew|/usr/local/(Cellar|opt)' >/dev/null; then
+            echo "ERROR: Homebrew runtime dependency leaked into final gifsicle binary"
+            exit 1
+          fi
+
+      - name: Assemble license notices and source bundle
+        working-directory: gifsicle
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DIST_DIR="${{ github.workspace }}/dist/gifsicle-${GIFSICLE_REF}-macos-${GIFSICLE_ARTIFACT_ARCH}"
+          LICENSES_MD="$DIST_DIR/LICENSES-ALL.md"
+          SAFE_REF="${GIFSICLE_REF//\//-}"
+          SOURCE_TARBALL="$DIST_DIR/gifsicle-${SAFE_REF}-source.tar.gz"
+
+          test -s COPYING
+
+          : > "$LICENSES_MD"
+
+          printf '### License: GPL-2.0-only\n' >> "$LICENSES_MD"
+          printf '#### Used by: [gifsicle %s](https://github.com/kohler/gifsicle)\n' "$GIFSICLE_REF" >> "$LICENSES_MD"
+          printf '#### License text\n```\n' >> "$LICENSES_MD"
+          cat COPYING >> "$LICENSES_MD"
+          printf '\n```\n' >> "$LICENSES_MD"
+
+          git archive --format=tar --prefix="gifsicle-${SAFE_REF}-source/" HEAD | gzip -n > "$SOURCE_TARBALL"
+
+          test -s "$LICENSES_MD"
+          test -s "$SOURCE_TARBALL"
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          SAFE_REF="${GIFSICLE_REF//\//-}"
+          DIST_DIR="dist/gifsicle-${GIFSICLE_REF}-macos-${GIFSICLE_ARTIFACT_ARCH}"
+          zip -X -j \
+            "gifsicle-${GIFSICLE_REF}-macos-${GIFSICLE_ARTIFACT_ARCH}.zip" \
+            "$DIST_DIR/gifsicle" \
+            "$DIST_DIR/LICENSES-ALL.md" \
+            "$DIST_DIR/gifsicle-${SAFE_REF}-source.tar.gz"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v7
+        with:
+          path: gifsicle-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}.zip
+          if-no-files-found: error
+          archive: false
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v8
+        with:
+          pattern: gifsicle-${{ github.event.inputs.tag }}-macos-*.zip
+          path: release
+          merge-multiple: true
+          skip-decompress: true
+
+      - uses: ncipollo/release-action@v1.21.0
+        with:
+          tag: gifsicle-${{ github.event.inputs.tag }}
+          name: gifsicle-${{ github.event.inputs.tag }}
+          artifacts: 'release/*.zip'
+          allowUpdates: true
+          artifactErrorsFailBuild: true
