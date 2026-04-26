@@ -102,8 +102,11 @@ cmakeTargetArgs(){
 }
 
 cmakePolicyCompatArgs(){
+    SRT_CMAKE_POLICY_MINIMUM_VERSION="3.5"
+
     command -v cmake > /dev/null 2>&1 || return
     CMAKE_MAJOR_VERSION=$(cmake --version | head -n 1 | grep -Eo '[0-9]+' | head -n 1)
+    [ -n "$CMAKE_MAJOR_VERSION" ] || return
 
     case "$CMAKE_MAJOR_VERSION" in
         ''|*[!0-9]*)
@@ -112,8 +115,8 @@ cmakePolicyCompatArgs(){
     esac
 
     if [ "$CMAKE_MAJOR_VERSION" -ge 4 ]; then
-        # Used by build-srt.sh so CMake 4 accepts SRT's pre-3.5 minimum declaration.
-        printf '%s ' "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+        # CMake 4 drops compatibility for projects declaring a minimum below 3.5.
+        printf '%s ' "-DCMAKE_POLICY_VERSION_MINIMUM=$SRT_CMAKE_POLICY_MINIMUM_VERSION"
     fi
 }
 
