@@ -49,7 +49,7 @@ mkdir srt_build
 checkStatus $? "create build directory failed"
 cd srt_build
 checkStatus $? "change build directory failed"
-cmake $(cmakeTargetArgs) -DCMAKE_INSTALL_PREFIX:PATH=$TOOL_DIR -DENABLE_SHARED=OFF -DENABLE_APPS=OFF ../srt-$VERSION/
+cmake $(cmakeTargetArgs) $(cmakePolicyCompatArgs) -DCMAKE_INSTALL_PREFIX:PATH=$TOOL_DIR -DENABLE_SHARED=OFF -DENABLE_APPS=OFF ../srt-$VERSION/
 checkStatus $? "configuration failed"
 
 # build
