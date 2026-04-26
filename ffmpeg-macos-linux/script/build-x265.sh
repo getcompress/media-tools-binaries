@@ -60,7 +60,7 @@ if [ $SKIP_X265_MULTIBIT = "NO" ]; then
     checkStatus $? "configuration 10 bit failed"
 
     # build 10 bit
-    make -j $CPUS
+    cmakeBuild "$CPUS"
     checkStatus $? "build 10 bit failed"
     cd ..
     checkStatus $? "change directory failed"
@@ -75,7 +75,7 @@ if [ $SKIP_X265_MULTIBIT = "NO" ]; then
     checkStatus $? "configuration 12 bit failed"
 
     # build 12 bit
-    make -j $CPUS
+    cmakeBuild "$CPUS"
     checkStatus $? "build 12 bit failed"
     cd ..
     checkStatus $? "change directory failed"
@@ -91,7 +91,7 @@ if [ $SKIP_X265_MULTIBIT = "NO" ]; then
     checkStatus $? "configuration 8 bit failed"
 
     # build 8 bit
-    make -j $CPUS
+    cmakeBuild "$CPUS"
     checkStatus $? "build 8 bit failed"
 
     # merge libraries
@@ -116,12 +116,12 @@ else
     checkStatus $? "configuration failed"
 
     # build
-    make -j $CPUS
+    cmakeBuild "$CPUS"
     checkStatus $? "build failed"
 fi
 
 # install
-make install
+cmakeInstall
 checkStatus $? "installation failed"
 
 # post-installation

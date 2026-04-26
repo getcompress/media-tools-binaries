@@ -53,9 +53,9 @@ cmake $(cmakeTargetArgs) -DCMAKE_INSTALL_PREFIX:PATH=$TOOL_DIR -DBUILD_SHARED_LI
 checkStatus $? "configuration failed"
 
 # build
-make -j $CPUS
+cmakeBuild "$CPUS"
 checkStatus $? "build failed"
 
 # install
-make install
+cmakeInstall
 checkStatus $? "installation failed"
