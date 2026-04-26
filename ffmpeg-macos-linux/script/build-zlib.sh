@@ -49,12 +49,27 @@ checkStatus $? "change directory failed"
 if isMsys; then
 	echo "run windows specific build"
 
-	# windows build
-	make -j $CPUS -f win32/Makefile.gcc
+	ZLIB_CC="$(command -v gcc 2> /dev/null || command -v clang 2> /dev/null)"
+	if [ -z "$ZLIB_CC" ]; then
+		echo "no suitable C compiler found for Windows zlib build"
+		exit 1
+	fi
+	ZLIB_AR="$(command -v ar 2> /dev/null || command -v llvm-ar 2> /dev/null)"
+	if [ -z "$ZLIB_AR" ]; then
+		echo "no suitable archiver found for Windows zlib build"
+		exit 1
+	fi
+
+	echo "use CC=$ZLIB_CC"
+	echo "use AR=$ZLIB_AR"
+
+	# build the static archive only; FFmpeg links against libz.a and this avoids
+	# the extra shared/example targets from win32/Makefile.gcc.
+	make -j $CPUS -f win32/Makefile.gcc libz.a CC="$ZLIB_CC" AR="$ZLIB_AR"
 	checkStatus $? "build failed"
 
 	# install
-	make -j $CPUS -f win32/Makefile.gcc install INCLUDE_PATH=$TOOL_DIR/include LIBRARY_PATH=$TOOL_DIR/lib BINARY_PATH=$TOOL_DIR/bin
+	make -j $CPUS -f win32/Makefile.gcc install CC="$ZLIB_CC" AR="$ZLIB_AR" INCLUDE_PATH=$TOOL_DIR/include LIBRARY_PATH=$TOOL_DIR/lib BINARY_PATH=$TOOL_DIR/bin
 	checkStatus $? "installation failed"
 else
 	# prepare build
