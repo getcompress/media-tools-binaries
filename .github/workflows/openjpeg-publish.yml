@@ -242,7 +242,11 @@ jobs:
           Copy-Item $OPJDump.FullName "$DistDir\opj_dump.exe"
 
           Write-Host "==> Verifying binaries"
-          dumpbin /headers "$DistDir\opj_compress.exe" | Select-String 'machine|subsystem'
+          foreach ($bin in @("opj_compress.exe", "opj_decompress.exe", "opj_dump.exe")) {
+            $f = Get-Item "$DistDir\$bin"
+            if ($f.Length -eq 0) { throw "$bin is empty" }
+            Write-Host "$($f.Name): $($f.Length) bytes"
+          }
 
       - name: Assemble license notices (macOS/Linux)
         if: matrix.platform != 'windows'
