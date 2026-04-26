@@ -103,7 +103,7 @@ cmakeTargetArgs(){
 
 cmakePolicyCompatArgs(){
     command -v cmake > /dev/null 2>&1 || return
-    CMAKE_MAJOR_VERSION=$(cmake --version | head -n 1 | sed -n 's/[^0-9]*\([0-9]\+\)\..*/\1/p')
+    CMAKE_MAJOR_VERSION=$(cmake --version | head -n 1 | grep -Eo '[0-9]+' | head -n 1)
 
     case "$CMAKE_MAJOR_VERSION" in
         ''|*[!0-9]*)
@@ -112,7 +112,7 @@ cmakePolicyCompatArgs(){
     esac
 
     if [ "$CMAKE_MAJOR_VERSION" -ge 4 ]; then
-        # SRT 1.5.4 declares a pre-3.5 CMake minimum; this lets CMake 4 accept it.
+        # Used by build-srt.sh so CMake 4 accepts SRT's pre-3.5 minimum declaration.
         printf '%s ' "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
     fi
 }
