@@ -77,7 +77,7 @@ jobs:
         with:
           msystem: ${{ matrix.msystem }}
           update: true
-          install: autoconf automake make ${{ matrix.mingw_packages }}
+          install: autoconf automake make git ${{ matrix.mingw_packages }}
 
       - name: Checkout gifsicle
         uses: actions/checkout@v6
