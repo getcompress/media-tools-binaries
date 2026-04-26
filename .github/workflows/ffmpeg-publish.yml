@@ -42,75 +42,71 @@ on:
         type: boolean
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      build_matrix: ${{ steps.matrix.outputs.build_matrix }}
+      build_count: ${{ steps.matrix.outputs.build_count }}
+
+    steps:
+      - name: Prepare build matrix
+        id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rows=""
+          count=0
+
+          add_row() {
+            local row="$1"
+            if [[ -n "$rows" ]]; then
+              rows="$rows,$row"
+            else
+              rows="$row"
+            fi
+            count=$((count + 1))
+          }
+
+          if [[ "${{ inputs.build_macos_x64 }}" == "true" ]]; then
+            add_row '{"platform":"macos","artifact_arch":"x64","runner":"macos-15-intel","target_arch":"x86_64","macos_min":"10.15","ffmpeg_arch":"","rust_target":"","vpx_target":"","artifact_bin":"ffmpeg"}'
+          fi
+
+          if [[ "${{ inputs.build_macos_arm64 }}" == "true" ]]; then
+            add_row '{"platform":"macos","artifact_arch":"arm64","runner":"macos-15","target_arch":"arm64","macos_min":"11.0","ffmpeg_arch":"","rust_target":"","vpx_target":"","artifact_bin":"ffmpeg"}'
+          fi
+
+          if [[ "${{ inputs.build_linux_x64 }}" == "true" ]]; then
+            add_row '{"platform":"linux","artifact_arch":"x64","runner":"ubuntu-24.04","target_arch":"","macos_min":"","ffmpeg_arch":"","rust_target":"","vpx_target":"","artifact_bin":"ffmpeg"}'
+          fi
+
+          if [[ "${{ inputs.build_linux_arm64 }}" == "true" ]]; then
+            add_row '{"platform":"linux","artifact_arch":"arm64","runner":"ubuntu-24.04-arm","target_arch":"","macos_min":"","ffmpeg_arch":"","rust_target":"","vpx_target":"","artifact_bin":"ffmpeg"}'
+          fi
+
+          if [[ "${{ inputs.build_windows_x64 }}" == "true" ]]; then
+            add_row '{"platform":"windows","artifact_arch":"x64","runner":"windows-latest","target_arch":"","macos_min":"","msystem":"MINGW64","mingw_packages":"mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja","ffmpeg_arch":"x86_64","rust_target":"x86_64-pc-windows-gnu","vpx_target":"x86_64-win64-gcc","artifact_bin":"ffmpeg.exe"}'
+          fi
+
+          if [[ "${{ inputs.build_windows_arm64 }}" == "true" ]]; then
+            add_row '{"platform":"windows","artifact_arch":"arm64","runner":"windows-11-arm","target_arch":"","macos_min":"","msystem":"CLANGARM64","mingw_packages":"mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-cmake mingw-w64-clang-aarch64-ninja","ffmpeg_arch":"arm64","rust_target":"aarch64-pc-windows-gnullvm","vpx_target":"arm64-win64-clang","artifact_bin":"ffmpeg.exe"}'
+          fi
+
+          printf 'build_matrix=[%s]\n' "$rows" >> "$GITHUB_OUTPUT"
+          printf 'build_count=%s\n' "$count" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: prepare
     name: build-${{ matrix.platform }}-${{ matrix.artifact_arch }}
     runs-on: ${{ matrix.runner }}
-    if: ${{ (matrix.platform == 'macos' && matrix.artifact_arch == 'x64' && inputs.build_macos_x64) || (matrix.platform == 'macos' && matrix.artifact_arch == 'arm64' && inputs.build_macos_arm64) || (matrix.platform == 'linux' && matrix.artifact_arch == 'x64' && inputs.build_linux_x64) || (matrix.platform == 'linux' && matrix.artifact_arch == 'arm64' && inputs.build_linux_arm64) || (matrix.platform == 'windows' && matrix.artifact_arch == 'x64' && inputs.build_windows_x64) || (matrix.platform == 'windows' && matrix.artifact_arch == 'arm64' && inputs.build_windows_arm64) }}
+    if: ${{ needs.prepare.outputs.build_count != '0' }}
     permissions:
       contents: read
 
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: macos
-            artifact_arch: x64
-            runner: macos-15-intel
-            target_arch: x86_64
-            macos_min: '10.15'
-            ffmpeg_arch: ''
-            rust_target: ''
-            vpx_target: ''
-            artifact_bin: ffmpeg
-          - platform: macos
-            artifact_arch: arm64
-            runner: macos-15
-            target_arch: arm64
-            macos_min: '11.0'
-            ffmpeg_arch: ''
-            rust_target: ''
-            vpx_target: ''
-            artifact_bin: ffmpeg
-          - platform: linux
-            artifact_arch: x64
-            runner: ubuntu-24.04
-            target_arch: ''
-            macos_min: ''
-            ffmpeg_arch: ''
-            rust_target: ''
-            vpx_target: ''
-            artifact_bin: ffmpeg
-          - platform: linux
-            artifact_arch: arm64
-            runner: ubuntu-24.04-arm
-            target_arch: ''
-            macos_min: ''
-            ffmpeg_arch: ''
-            rust_target: ''
-            vpx_target: ''
-            artifact_bin: ffmpeg
-          - platform: windows
-            artifact_arch: x64
-            runner: windows-latest
-            target_arch: ''
-            macos_min: ''
-            msystem: MINGW64
-            mingw_packages: 'mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja'
-            ffmpeg_arch: x86_64
-            rust_target: x86_64-pc-windows-gnu
-            vpx_target: x86_64-win64-gcc
-            artifact_bin: ffmpeg.exe
-          - platform: windows
-            artifact_arch: arm64
-            runner: windows-11-arm
-            target_arch: ''
-            macos_min: ''
-            msystem: CLANGARM64
-            mingw_packages: 'mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-cmake mingw-w64-clang-aarch64-ninja'
-            ffmpeg_arch: arm64
-            rust_target: aarch64-pc-windows-gnullvm
-            vpx_target: arm64-win64-clang
-            artifact_bin: ffmpeg.exe
+        include: ${{ fromJSON(needs.prepare.outputs.build_matrix) }}
 
     env:
       RELEASE_TAG: ${{ github.event.inputs.release_tag }}
@@ -447,9 +443,9 @@ jobs:
           archive: false
 
   publish:
-    needs: build
+    needs: [prepare, build]
     runs-on: ubuntu-latest
-    if: ${{ inputs.build_macos_x64 || inputs.build_macos_arm64 || inputs.build_linux_x64 || inputs.build_linux_arm64 || inputs.build_windows_x64 || inputs.build_windows_arm64 }}
+    if: ${{ needs.prepare.outputs.build_count != '0' }}
     permissions: { contents: write }
 
     steps:
