@@ -101,6 +101,14 @@ cmakeTargetArgs(){
     fi
 }
 
+cmakePolicyCompatArgs(){
+    CMAKE_MAJOR_VERSION=$(cmake --version | sed -n '1s/.* version \([0-9][0-9]*\)\..*/\1/p')
+
+    if [ -n "$CMAKE_MAJOR_VERSION" ] && [ "$CMAKE_MAJOR_VERSION" -ge 4 ]; then
+        printf '%s ' "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+    fi
+}
+
 cmakeBuild(){
     cmake --build . --parallel "$1"
 }
