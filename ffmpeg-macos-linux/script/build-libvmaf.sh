@@ -50,11 +50,11 @@ prepareMeson
 # prepare build
 cd "vmaf-$VERSION/libvmaf/"
 checkStatus $? "change directory failed"
-MESON_ARGS="--prefix \"$TOOL_DIR\" --libdir=lib --buildtype release --default-library static"
 if isMsys; then
-    MESON_ARGS="$MESON_ARGS -Denable_tests=false"
+    meson build --prefix "$TOOL_DIR" --libdir=lib --buildtype release --default-library static -Denable_tests=false
+else
+    meson build --prefix "$TOOL_DIR" --libdir=lib --buildtype release --default-library static
 fi
-eval "meson build $MESON_ARGS"
 checkStatus $? "configuration failed"
 
 # build
