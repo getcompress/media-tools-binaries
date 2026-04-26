@@ -301,6 +301,7 @@ jobs:
             -DOPENSSL_USE_STATIC_LIBS=TRUE `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
             -DCMAKE_SYSTEM_VERSION=10.0 `
+            "-DCMAKE_EXE_LINKER_FLAGS=ws2_32.lib crypt32.lib" `
             "-DCMAKE_TOOLCHAIN_FILE=$VcpkgRoot\scripts\buildsystems\vcpkg.cmake" `
             "-DVCPKG_TARGET_TRIPLET=$Env:VCPKG_TRIPLET" `
             "-DCMAKE_PREFIX_PATH=$VcpkgInstalled"
