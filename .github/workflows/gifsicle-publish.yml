@@ -10,7 +10,7 @@ on:
 
 jobs:
   build:
-    name: build-${{ matrix.artifact_arch }}
+    name: build-${{ matrix.platform }}-${{ matrix.artifact_arch }}
     runs-on: ${{ matrix.runner }}
     permissions: { contents: read }
 
@@ -18,26 +18,66 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - artifact_arch: arm64
+          - platform: macos
+            artifact_arch: arm64
             arch: arm64
             macos_min: '11.0'
             runner: macos-latest
-          - artifact_arch: x64
+          - platform: macos
+            artifact_arch: x64
             arch: x86_64
             macos_min: '10.13'
             runner: macos-15-intel
+          - platform: linux
+            artifact_arch: x64
+            arch: x86_64
+            runner: ubuntu-24.04
+          - platform: linux
+            artifact_arch: arm64
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+          - platform: windows
+            artifact_arch: x64
+            arch: x86_64
+            msystem: MINGW64
+            mingw_packages: 'mingw-w64-x86_64-gcc'
+            runner: windows-latest
+          - platform: windows
+            artifact_arch: arm64
+            arch: aarch64
+            msystem: CLANGARM64
+            mingw_packages: 'mingw-w64-clang-aarch64-clang'
+            runner: windows-11-arm
 
     env:
       GIFSICLE_ARTIFACT_ARCH: ${{ matrix.artifact_arch }}
       GIFSICLE_BUILD_ARCH: ${{ matrix.arch }}
+      GIFSICLE_PLATFORM: ${{ matrix.platform }}
       GIFSICLE_REF: ${{ github.event.inputs.tag }}
       MACOS_MIN: ${{ matrix.macos_min }}
 
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install build deps
+      - name: Install macOS build deps
+        if: matrix.platform == 'macos'
         run: brew install automake autoconf
+
+      - name: Install Linux build deps
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake build-essential
+
+      - name: Set up MSYS2
+        if: matrix.platform == 'windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: true
+          install: autoconf automake make ${{ matrix.mingw_packages }}
 
       - name: Checkout gifsicle
         uses: actions/checkout@v6
@@ -46,14 +86,15 @@ jobs:
           ref: ${{ github.event.inputs.tag }}
           path: gifsicle
 
-      - name: Build self-contained gifsicle
+      - name: Build self-contained gifsicle (macOS)
+        if: matrix.platform == 'macos'
         working-directory: gifsicle
         shell: bash
         run: |
           set -euo pipefail
 
           ROOT="$(pwd)"
-          DIST_DIR="${{ github.workspace }}/dist/gifsicle-${GIFSICLE_REF}-macos-${GIFSICLE_ARTIFACT_ARCH}"
+          DIST_DIR="${{ github.workspace }}/dist/gifsicle-${GIFSICLE_REF}-${GIFSICLE_PLATFORM}-${GIFSICLE_ARTIFACT_ARCH}"
           INSTALL_DIR="$ROOT/output"
 
           rm -rf "$DIST_DIR" "$INSTALL_DIR"
@@ -84,13 +125,96 @@ jobs:
             exit 1
           fi
 
-      - name: Assemble license notices and source bundle
+      - name: Build self-contained gifsicle (Linux)
+        if: matrix.platform == 'linux'
         working-directory: gifsicle
         shell: bash
         run: |
           set -euo pipefail
 
-          DIST_DIR="${{ github.workspace }}/dist/gifsicle-${GIFSICLE_REF}-macos-${GIFSICLE_ARTIFACT_ARCH}"
+          ROOT="$(pwd)"
+          DIST_DIR="${{ github.workspace }}/dist/gifsicle-${GIFSICLE_REF}-${GIFSICLE_PLATFORM}-${GIFSICLE_ARTIFACT_ARCH}"
+          INSTALL_DIR="$ROOT/output"
+
+          rm -rf "$DIST_DIR" "$INSTALL_DIR"
+          mkdir -p "$DIST_DIR" "$INSTALL_DIR"
+
+          ./bootstrap.sh
+
+          ./configure \
+            --disable-dependency-tracking \
+            --prefix="$INSTALL_DIR" \
+            --disable-gifview --disable-gifdiff
+
+          make -j"$(nproc)"
+          make install
+
+          cp "$INSTALL_DIR/bin/gifsicle" "$DIST_DIR/gifsicle"
+          chmod +x "$DIST_DIR/gifsicle"
+          strip "$DIST_DIR/gifsicle" || true
+
+          echo "==> Verifying binary"
+          file "$DIST_DIR/gifsicle"
+
+          if [[ "${GIFSICLE_BUILD_ARCH}" == "x86_64" ]] && ! file "$DIST_DIR/gifsicle" | grep -q 'x86-64'; then
+            echo "ERROR: expected x86_64 binary"
+            exit 1
+          fi
+          if [[ "${GIFSICLE_BUILD_ARCH}" == "aarch64" ]] && ! file "$DIST_DIR/gifsicle" | grep -qE 'ARM aarch64|aarch64'; then
+            echo "ERROR: expected aarch64 binary"
+            exit 1
+          fi
+
+          echo "==> Verifying linked libraries"
+          ldd "$DIST_DIR/gifsicle"
+
+          if ldd "$DIST_DIR/gifsicle" | grep -E "${GITHUB_WORKSPACE}|/opt/hostedtoolcache|/home/linuxbrew|not found" >/dev/null; then
+            echo "ERROR: Linux binary leaked a runner-specific dependency"
+            exit 1
+          fi
+
+      - name: Build self-contained gifsicle (Windows)
+        if: matrix.platform == 'windows'
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+
+          WS="$(cygpath -u "$GITHUB_WORKSPACE")"
+          cd "${WS}/gifsicle"
+
+          ROOT="$(pwd)"
+          DIST_DIR="${WS}/dist/gifsicle-${GIFSICLE_REF}-${GIFSICLE_PLATFORM}-${GIFSICLE_ARTIFACT_ARCH}"
+          INSTALL_DIR="$ROOT/output"
+
+          rm -rf "$DIST_DIR" "$INSTALL_DIR"
+          mkdir -p "$DIST_DIR" "$INSTALL_DIR"
+
+          ./bootstrap.sh
+
+          ./configure \
+            --disable-dependency-tracking \
+            --prefix="$INSTALL_DIR" \
+            --disable-gifview --disable-gifdiff
+
+          make -j"$(nproc 2>/dev/null || echo "${NUMBER_OF_PROCESSORS:-4}")"
+          make install
+
+          cp "$INSTALL_DIR/bin/gifsicle.exe" "$DIST_DIR/gifsicle.exe"
+
+          echo "==> Verifying binary"
+          objdump -f "$DIST_DIR/gifsicle.exe" | head -5
+
+          echo "==> Verifying linked DLLs"
+          objdump -p "$DIST_DIR/gifsicle.exe" | grep 'DLL Name'
+
+      - name: Assemble license notices and source bundle (macOS/Linux)
+        if: matrix.platform != 'windows'
+        working-directory: gifsicle
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DIST_DIR="${{ github.workspace }}/dist/gifsicle-${GIFSICLE_REF}-${GIFSICLE_PLATFORM}-${GIFSICLE_ARTIFACT_ARCH}"
           LICENSES_MD="$DIST_DIR/LICENSES-ALL.md"
           SAFE_REF="${GIFSICLE_REF//\//-}"
           SOURCE_TARBALL="$DIST_DIR/gifsicle-${SAFE_REF}-source.tar.gz"
@@ -110,21 +234,64 @@ jobs:
           test -s "$LICENSES_MD"
           test -s "$SOURCE_TARBALL"
 
-      - name: Package artifact
+      - name: Assemble license notices and source bundle (Windows)
+        if: matrix.platform == 'windows'
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+
+          WS="$(cygpath -u "$GITHUB_WORKSPACE")"
+          cd "${WS}/gifsicle"
+
+          DIST_DIR="${WS}/dist/gifsicle-${GIFSICLE_REF}-${GIFSICLE_PLATFORM}-${GIFSICLE_ARTIFACT_ARCH}"
+          LICENSES_MD="$DIST_DIR/LICENSES-ALL.md"
+          SAFE_REF="${GIFSICLE_REF//\//-}"
+          SOURCE_TARBALL="$DIST_DIR/gifsicle-${SAFE_REF}-source.tar.gz"
+
+          test -s COPYING
+
+          : > "$LICENSES_MD"
+
+          printf '### License: GPL-2.0-only\n' >> "$LICENSES_MD"
+          printf '#### Used by: [gifsicle %s](https://github.com/kohler/gifsicle)\n' "$GIFSICLE_REF" >> "$LICENSES_MD"
+          printf '#### License text\n```\n' >> "$LICENSES_MD"
+          cat COPYING >> "$LICENSES_MD"
+          printf '\n```\n' >> "$LICENSES_MD"
+
+          git archive --format=tar --prefix="gifsicle-${SAFE_REF}-source/" HEAD | gzip -n > "$SOURCE_TARBALL"
+
+          test -s "$LICENSES_MD"
+          test -s "$SOURCE_TARBALL"
+
+      - name: Package artifact (macOS/Linux)
+        if: matrix.platform != 'windows'
         shell: bash
         run: |
           SAFE_REF="${GIFSICLE_REF//\//-}"
-          DIST_DIR="dist/gifsicle-${GIFSICLE_REF}-macos-${GIFSICLE_ARTIFACT_ARCH}"
+          DIST_DIR="dist/gifsicle-${GIFSICLE_REF}-${GIFSICLE_PLATFORM}-${GIFSICLE_ARTIFACT_ARCH}"
           zip -X -j \
-            "gifsicle-${GIFSICLE_REF}-macos-${GIFSICLE_ARTIFACT_ARCH}.zip" \
-            "$DIST_DIR/gifsicle" \
-            "$DIST_DIR/LICENSES-ALL.md" \
-            "$DIST_DIR/gifsicle-${SAFE_REF}-source.tar.gz"
+            "gifsicle-${GIFSICLE_REF}-${GIFSICLE_PLATFORM}-${GIFSICLE_ARTIFACT_ARCH}.zip" \
+            "${DIST_DIR}/gifsicle" \
+            "${DIST_DIR}/LICENSES-ALL.md" \
+            "${DIST_DIR}/gifsicle-${SAFE_REF}-source.tar.gz"
+
+      - name: Package artifact (Windows)
+        if: matrix.platform == 'windows'
+        shell: msys2 {0}
+        run: |
+          SAFE_REF="${GIFSICLE_REF//\//-}"
+          WS="$(cygpath -u "$GITHUB_WORKSPACE")"
+          DIST_DIR="${WS}/dist/gifsicle-${GIFSICLE_REF}-${GIFSICLE_PLATFORM}-${GIFSICLE_ARTIFACT_ARCH}"
+          zip -X -j \
+            "${WS}/gifsicle-${GIFSICLE_REF}-${GIFSICLE_PLATFORM}-${GIFSICLE_ARTIFACT_ARCH}.zip" \
+            "${DIST_DIR}/gifsicle.exe" \
+            "${DIST_DIR}/LICENSES-ALL.md" \
+            "${DIST_DIR}/gifsicle-${SAFE_REF}-source.tar.gz"
 
       - name: Upload package
         uses: actions/upload-artifact@v7
         with:
-          path: gifsicle-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}.zip
+          path: gifsicle-${{ github.event.inputs.tag }}-${{ matrix.platform }}-${{ matrix.artifact_arch }}.zip
           if-no-files-found: error
           archive: false
 
@@ -137,7 +304,7 @@ jobs:
       - name: Download packages
         uses: actions/download-artifact@v8
         with:
-          pattern: gifsicle-${{ github.event.inputs.tag }}-macos-*.zip
+          pattern: gifsicle-${{ github.event.inputs.tag }}-*.zip
           path: release
           merge-multiple: true
           skip-decompress: true
