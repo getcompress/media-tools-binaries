@@ -105,6 +105,7 @@ cmakePolicyCompatArgs(){
     CMAKE_MAJOR_VERSION=$(cmake --version | sed -n '1s/.* version \([0-9][0-9]*\)\..*/\1/p')
 
     if [ -n "$CMAKE_MAJOR_VERSION" ] && [ "$CMAKE_MAJOR_VERSION" -ge 4 ]; then
+        # SRT 1.5.4 still declares a pre-3.5 CMake minimum, which CMake 4 rejects.
         printf '%s ' "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
     fi
 }
