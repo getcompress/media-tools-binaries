@@ -10,11 +10,50 @@ on:
         description: Release tag suffix
         required: true
         type: string
+      build_macos_x64:
+        description: Build macOS x64
+        required: true
+        default: true
+        type: boolean
+      build_macos_arm64:
+        description: Build macOS arm64
+        required: true
+        default: true
+        type: boolean
+      build_linux_x64:
+        description: Build Linux x64
+        required: true
+        default: true
+        type: boolean
+      build_linux_arm64:
+        description: Build Linux arm64
+        required: true
+        default: true
+        type: boolean
+      build_windows_x64:
+        description: Build Windows x64
+        required: true
+        default: true
+        type: boolean
+      build_windows_arm64:
+        description: Build Windows arm64
+        required: true
+        default: true
+        type: boolean
 
 jobs:
   build:
     name: build-${{ matrix.platform }}-${{ matrix.artifact_arch }}
     runs-on: ${{ matrix.runner }}
+    if: >-
+      ${{
+        (matrix.platform == 'macos' && matrix.artifact_arch == 'x64' && inputs.build_macos_x64) ||
+        (matrix.platform == 'macos' && matrix.artifact_arch == 'arm64' && inputs.build_macos_arm64) ||
+        (matrix.platform == 'linux' && matrix.artifact_arch == 'x64' && inputs.build_linux_x64) ||
+        (matrix.platform == 'linux' && matrix.artifact_arch == 'arm64' && inputs.build_linux_arm64) ||
+        (matrix.platform == 'windows' && matrix.artifact_arch == 'x64' && inputs.build_windows_x64) ||
+        (matrix.platform == 'windows' && matrix.artifact_arch == 'arm64' && inputs.build_windows_arm64)
+      }}
     permissions:
       contents: read
 
@@ -27,27 +66,69 @@ jobs:
             runner: macos-15-intel
             target_arch: x86_64
             macos_min: '10.15'
+            ffmpeg_arch: ''
+            rust_target: ''
+            vpx_target: ''
+            artifact_bin: ffmpeg
           - platform: macos
             artifact_arch: arm64
             runner: macos-15
             target_arch: arm64
             macos_min: '11.0'
+            ffmpeg_arch: ''
+            rust_target: ''
+            vpx_target: ''
+            artifact_bin: ffmpeg
           - platform: linux
             artifact_arch: x64
             runner: ubuntu-24.04
             target_arch: ''
             macos_min: ''
+            ffmpeg_arch: ''
+            rust_target: ''
+            vpx_target: ''
+            artifact_bin: ffmpeg
           - platform: linux
             artifact_arch: arm64
             runner: ubuntu-24.04-arm
             target_arch: ''
             macos_min: ''
+            ffmpeg_arch: ''
+            rust_target: ''
+            vpx_target: ''
+            artifact_bin: ffmpeg
+          - platform: windows
+            artifact_arch: x64
+            runner: windows-latest
+            target_arch: ''
+            macos_min: ''
+            msystem: MINGW64
+            mingw_packages: 'mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja'
+            ffmpeg_arch: x86_64
+            rust_target: x86_64-pc-windows-gnu
+            vpx_target: x86_64-win64-gcc
+            artifact_bin: ffmpeg.exe
+          - platform: windows
+            artifact_arch: arm64
+            runner: windows-11-arm
+            target_arch: ''
+            macos_min: ''
+            msystem: CLANGARM64
+            mingw_packages: 'mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-cmake mingw-w64-clang-aarch64-ninja'
+            ffmpeg_arch: arm64
+            rust_target: aarch64-pc-windows-gnullvm
+            vpx_target: arm64-win64-clang
+            artifact_bin: ffmpeg.exe
 
     env:
       RELEASE_TAG: ${{ github.event.inputs.release_tag }}
       TARGET_PLATFORM: ${{ matrix.platform }}
       TARGET_ARCH: ${{ matrix.target_arch }}
       MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos_min }}
+      FFMPEG_ARCH: ${{ matrix.ffmpeg_arch }}
+      RUST_TARGET: ${{ matrix.rust_target }}
+      VPX_TARGET: ${{ matrix.vpx_target }}
+      ARTIFACT_BIN: ${{ matrix.artifact_bin }}
 
     steps:
       - uses: actions/checkout@v6
@@ -66,12 +147,23 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cargo-c
+      - name: Add Windows Rust target
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: rustup target add $Env:RUST_TARGET
+
+      - name: Install cargo-c (macOS/Linux)
+        if: matrix.platform != 'windows'
         shell: bash
         run: cargo install cargo-c --locked
 
+      - name: Install cargo-c (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: cargo install cargo-c --locked
+
       - name: Install Linux build deps
-        if: runner.os == 'Linux'
+        if: matrix.platform == 'linux'
         shell: bash
         run: |
           set -euo pipefail
@@ -91,13 +183,24 @@ jobs:
             zip
 
       - name: Install macOS build deps
-        if: runner.os == 'macOS'
+        if: matrix.platform == 'macos'
         shell: bash
         run: |
           set -euo pipefail
           brew install autoconf automake gperf libtool
 
-      - name: Build FFmpeg
+      - name: Set up MSYS2
+        if: matrix.platform == 'windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: true
+          install: >-
+            autoconf automake make libtool diffutils patch git curl zip unzip
+            bzip2 xz perl python gperf ${{ matrix.mingw_packages }}
+
+      - name: Build FFmpeg (macOS/Linux)
+        if: matrix.platform != 'windows'
         shell: bash
         run: |
           set -euo pipefail
@@ -136,14 +239,58 @@ jobs:
             exit 1
           fi
 
-      - name: Assemble package and verify
+      - name: Build FFmpeg (Windows)
+        if: matrix.platform == 'windows'
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+
+          WS="$(cygpath -u "$GITHUB_WORKSPACE")"
+          export PATH="$(cygpath -u "$USERPROFILE/.cargo/bin"):$PATH"
+          export CARGO_HOME="$(cygpath -u "$USERPROFILE/.cargo")"
+          export RUSTUP_HOME="$(cygpath -u "$USERPROFILE/.rustup")"
+
+          BUILD_ROOT="${WS}/build-${TARGET_PLATFORM}-${{ matrix.artifact_arch }}"
+          rm -rf "$BUILD_ROOT"
+          mkdir -p "$BUILD_ROOT"
+          cd "$BUILD_ROOT"
+
+          if ! "${WS}/ffmpeg-macos-linux/build.sh" \
+            -SKIP_BUNDLE=YES \
+            -SKIP_DECKLINK=YES \
+            -SKIP_LIBBLURAY=YES \
+            -SKIP_TEST=YES \
+            -FFMPEG_ONLY=YES \
+            -FFMPEG_EXTRA_VERSION=https://getcompress.com \
+            -SKIP_ZVBI=YES \
+            -SKIP_LIBKLVANC=YES \
+            -SKIP_X265_MULTIBIT=YES; then
+            echo "==> Build logs"
+            for log_file in "$BUILD_ROOT"/log/*.log; do
+              if [[ -f "$log_file" ]]; then
+                echo "---- $log_file ----"
+                tail -n 200 "$log_file" || true
+              fi
+            done
+
+            echo "==> Nested config logs"
+            find "$BUILD_ROOT/source" -name config.log -type f -print | while read -r config_log; do
+              echo "---- $config_log ----"
+              tail -n 200 "$config_log" || true
+            done
+
+            exit 1
+          fi
+
+      - name: Assemble package and verify (macOS/Linux)
+        if: matrix.platform != 'windows'
         shell: bash
         run: |
           set -euo pipefail
 
           BUILD_ROOT="${{ github.workspace }}/build-${TARGET_PLATFORM}-${{ matrix.artifact_arch }}"
           DIST_DIR="${{ github.workspace }}/dist/ffmpeg-${RELEASE_TAG}-${TARGET_PLATFORM}-${{ matrix.artifact_arch }}"
-          FFMPEG_BIN="$BUILD_ROOT/out/bin/ffmpeg"
+          FFMPEG_BIN="$BUILD_ROOT/out/bin/${ARTIFACT_BIN}"
           LICENSES_MD="$DIST_DIR/LICENSES-ALL.md"
           SOURCES_MD="$DIST_DIR/SOURCES.md"
           ZIP_PATH="${{ github.workspace }}/ffmpeg-${RELEASE_TAG}-${TARGET_PLATFORM}-${{ matrix.artifact_arch }}.zip"
@@ -223,6 +370,83 @@ jobs:
 
           zip -X -j "$ZIP_PATH" "$DIST_DIR/ffmpeg" "$LICENSES_MD" "$SOURCES_MD"
 
+      - name: Assemble package and verify (Windows)
+        if: matrix.platform == 'windows'
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+
+          WS="$(cygpath -u "$GITHUB_WORKSPACE")"
+          BUILD_ROOT="${WS}/build-${TARGET_PLATFORM}-${{ matrix.artifact_arch }}"
+          DIST_DIR="${WS}/dist/ffmpeg-${RELEASE_TAG}-${TARGET_PLATFORM}-${{ matrix.artifact_arch }}"
+          FFMPEG_BIN="$BUILD_ROOT/out/bin/${ARTIFACT_BIN}"
+          LICENSES_MD="$DIST_DIR/LICENSES-ALL.md"
+          SOURCES_MD="$DIST_DIR/SOURCES.md"
+          ZIP_PATH="${WS}/ffmpeg-${RELEASE_TAG}-${TARGET_PLATFORM}-${{ matrix.artifact_arch }}.zip"
+          WORKFLOW_SOURCE_URL="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/.github/workflows/ffmpeg-publish.yml"
+
+          export PATH="$(cygpath -u "$USERPROFILE/.cargo/bin"):$PATH"
+
+          rm -rf "$DIST_DIR" "$ZIP_PATH"
+          mkdir -p "$DIST_DIR"
+
+          test -x "$FFMPEG_BIN"
+
+          node "${WS}/ffmpeg-macos-linux/scripts/generate-licenses.mjs" \
+            "$BUILD_ROOT" \
+            "$LICENSES_MD" \
+            "$SOURCES_MD" \
+            "$WORKFLOW_SOURCE_URL"
+
+          cp "$FFMPEG_BIN" "$DIST_DIR/ffmpeg.exe"
+
+          VERSION_OUTPUT="$("$DIST_DIR/ffmpeg.exe" -version)"
+          printf '%s\n' "$VERSION_OUTPUT"
+
+          grep -F -- 'https://getcompress.com' <<<"$VERSION_OUTPUT"
+          grep -F -- '--enable-gpl' <<<"$VERSION_OUTPUT"
+          ! grep -F -- '--enable-nonfree' <<<"$VERSION_OUTPUT"
+          ! grep -F -- '--enable-decklink' <<<"$VERSION_OUTPUT"
+          ! grep -F -- '--enable-version3' <<<"$VERSION_OUTPUT"
+
+          OBJDUMP_OUTPUT="$(objdump -f "$DIST_DIR/ffmpeg.exe")"
+          printf '%s\n' "$OBJDUMP_OUTPUT"
+
+          if [[ "${{ matrix.artifact_arch }}" == "x64" ]]; then
+            grep -F 'pei-x86-64' <<<"$OBJDUMP_OUTPUT"
+          else
+            grep -F 'pei-aarch64' <<<"$OBJDUMP_OUTPUT"
+          fi
+
+          DLLS="$(objdump -p "$DIST_DIR/ffmpeg.exe" | awk -F': ' '/DLL Name:/ { print $2 }')"
+          printf '%s\n' "$DLLS"
+
+          while IFS= read -r dll; do
+            [[ -n "$dll" ]] || continue
+            dll_lower="$(printf '%s' "$dll" | tr '[:upper:]' '[:lower:]')"
+
+            case "$dll_lower" in
+              libwinpthread-1.dll|libgcc_s_*.dll|libstdc++-6.dll|libclang_rt.*.dll)
+                echo "ERROR: Windows binary leaked a toolchain runtime dependency: $dll"
+                exit 1
+                ;;
+            esac
+
+            case "$dll_lower" in
+              api-ms-win-*.dll|ext-ms-*.dll|advapi32.dll|bcrypt.dll|bcryptprimitives.dll|cfgmgr32.dll|combase.dll|comdlg32.dll|crypt32.dll|dbghelp.dll|dnsapi.dll|gdi32.dll|iphlpapi.dll|kernel32.dll|kernelbase.dll|msvcrt.dll|normaliz.dll|ntdll.dll|ole32.dll|oleaut32.dll|powrprof.dll|psapi.dll|rpcrt4.dll|secur32.dll|setupapi.dll|shell32.dll|shlwapi.dll|ucrtbase.dll|user32.dll|userenv.dll|version.dll|winmm.dll|ws2_32.dll)
+                ;;
+              *)
+                echo "ERROR: Windows binary has a non-system DLL dependency: $dll"
+                exit 1
+                ;;
+            esac
+          done <<<"$DLLS"
+
+          test -s "$LICENSES_MD"
+          test -s "$SOURCES_MD"
+
+          zip -X -j "$ZIP_PATH" "$DIST_DIR/ffmpeg.exe" "$LICENSES_MD" "$SOURCES_MD"
+
       - name: Upload package
         uses: actions/upload-artifact@v7
         with:
@@ -233,6 +457,15 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    if: >-
+      ${{
+        inputs.build_macos_x64 ||
+        inputs.build_macos_arm64 ||
+        inputs.build_linux_x64 ||
+        inputs.build_linux_arm64 ||
+        inputs.build_windows_x64 ||
+        inputs.build_windows_arm64
+      }}
     permissions: { contents: write }
 
     steps:

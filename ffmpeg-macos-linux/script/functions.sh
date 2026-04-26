@@ -59,6 +59,10 @@ appendFlag(){
     export "$VAR_NAME"
 }
 
+isMsys(){
+    [ "$(uname -o 2> /dev/null)" = "Msys" ]
+}
+
 applyTargetEnv(){
     if [ "$(uname)" != "Darwin" ]; then
         return

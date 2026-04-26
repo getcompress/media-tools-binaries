@@ -23,6 +23,11 @@ CPUS=$4
 # load functions
 . $SCRIPT_DIR/functions.sh
 
+if isMsys; then
+    echo "zvbi is not supported on Windows, skipping"
+    exit 0
+fi
+
 # load version
 VERSION=$(cat "$SCRIPT_DIR/../version/zvbi")
 checkStatus $? "load version failed"

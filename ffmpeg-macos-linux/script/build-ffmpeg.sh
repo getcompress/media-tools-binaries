@@ -67,15 +67,34 @@ fi
 appendFlag LDFLAGS "-L${TOOL_DIR}/lib"
 appendFlag CPPFLAGS "-I${TOOL_DIR}/include"
 
-FFMPEG_CONFIGURE_FLAGS="--disable-autodetect --enable-zlib --enable-iconv --disable-lzma --disable-libxcb --disable-xlib --disable-sdl2"
+FFMPEG_CONFIGURE_FLAGS="--disable-autodetect --enable-zlib --disable-lzma --disable-libxcb --disable-xlib --disable-sdl2"
+FFMPEG_LDEXEFLAGS=""
+
+if isMsys; then
+    FFMPEG_CONFIGURE_FLAGS="$FFMPEG_CONFIGURE_FLAGS --target-os=mingw32 --enable-w32threads"
+    if [ -n "$FFMPEG_ARCH" ]; then
+        FFMPEG_CONFIGURE_FLAGS="$FFMPEG_CONFIGURE_FLAGS --arch=$FFMPEG_ARCH"
+    fi
+    FFMPEG_LDEXEFLAGS="-static -static-libgcc -static-libstdc++"
+else
+    FFMPEG_CONFIGURE_FLAGS="$FFMPEG_CONFIGURE_FLAGS --enable-iconv"
+fi
+
 if [ "$(uname)" = "Darwin" ]; then
     FFMPEG_CONFIGURE_FLAGS="$FFMPEG_CONFIGURE_FLAGS --enable-bzlib --enable-securetransport --enable-audiotoolbox --enable-videotoolbox --enable-avfoundation --enable-coreimage --enable-metal --enable-appkit"
 fi
 
 # --pkg-config-flags="--static" is required to respect the Libs.private flags of the *.pc files
-./configure --prefix="$OUT_DIR" --pkg-config="$TOOL_DIR/bin/pkg-config" --pkg-config-flags="--static" --extra-version="$EXTRA_VERSION" \
-    $FFMPEG_CONFIGURE_FLAGS \
-    --enable-gray --enable-libxml2 $FFMPEG_LIB_FLAGS
+if [ -n "$FFMPEG_LDEXEFLAGS" ]; then
+    ./configure --prefix="$OUT_DIR" --pkg-config="$TOOL_DIR/bin/pkg-config" --pkg-config-flags="--static" --extra-version="$EXTRA_VERSION" \
+        --extra-ldexeflags="$FFMPEG_LDEXEFLAGS" \
+        $FFMPEG_CONFIGURE_FLAGS \
+        --enable-gray --enable-libxml2 $FFMPEG_LIB_FLAGS
+else
+    ./configure --prefix="$OUT_DIR" --pkg-config="$TOOL_DIR/bin/pkg-config" --pkg-config-flags="--static" --extra-version="$EXTRA_VERSION" \
+        $FFMPEG_CONFIGURE_FLAGS \
+        --enable-gray --enable-libxml2 $FFMPEG_LIB_FLAGS
+fi
 checkStatus $? "configuration failed"
 
 # start build

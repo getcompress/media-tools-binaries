@@ -47,7 +47,11 @@ cd "libvpx-$VERSION/"
 checkStatus $? "change directory failed"
 
 # prepare build
-./configure --prefix="$TOOL_DIR" --disable-unit-tests
+VPX_CONFIGURE_FLAGS="--prefix=$TOOL_DIR --disable-unit-tests"
+if isMsys && [ -n "$VPX_TARGET" ]; then
+    VPX_CONFIGURE_FLAGS="$VPX_CONFIGURE_FLAGS --target=$VPX_TARGET"
+fi
+./configure $VPX_CONFIGURE_FLAGS
 checkStatus $? "configuration failed"
 
 # build

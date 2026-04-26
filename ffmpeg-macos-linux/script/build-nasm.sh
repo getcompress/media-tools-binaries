@@ -23,6 +23,11 @@ CPUS=$4
 # load functions
 . $SCRIPT_DIR/functions.sh
 
+if isMsys; then
+    echo "skip nasm build on Windows (provided by pacman)"
+    exit 0
+fi
+
 # load version
 VERSION=$(cat "$SCRIPT_DIR/../version/nasm")
 checkStatus $? "load version failed"

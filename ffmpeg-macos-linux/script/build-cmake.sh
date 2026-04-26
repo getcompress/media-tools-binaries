@@ -23,6 +23,11 @@ CPUS=$4
 # load functions
 . $SCRIPT_DIR/functions.sh
 
+if isMsys; then
+    echo "skip cmake build on Windows (provided by pacman)"
+    exit 0
+fi
+
 # versions
 VERSION_MINOR="3.31"
 VERSION_PATCH="3.31.8"

@@ -47,5 +47,9 @@ cd "rav1e-$VERSION/"
 checkStatus $? "change directory failed"
 
 # install
-cargo cinstall --library-type staticlib --release -j $CPUS --prefix "$TOOL_DIR" --libdir="$TOOL_DIR/lib"
+if isMsys && [ -n "$RUST_TARGET" ]; then
+    cargo cinstall --library-type staticlib --release -j $CPUS --target "$RUST_TARGET" --prefix "$TOOL_DIR" --libdir="$TOOL_DIR/lib"
+else
+    cargo cinstall --library-type staticlib --release -j $CPUS --prefix "$TOOL_DIR" --libdir="$TOOL_DIR/lib"
+fi
 checkStatus $? "build or installation failed"
