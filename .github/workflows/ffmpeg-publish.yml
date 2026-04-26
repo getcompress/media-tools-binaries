@@ -184,7 +184,7 @@ jobs:
           msystem: ${{ matrix.msystem }}
           update: true
           install: >-
-            autoconf automake make libtool diffutils patch git curl zip unzip
+            autoconf automake make libtool diffutils patch git curl zip unzip nasm
             bzip2 xz perl gperf ${{ matrix.mingw_packages }}
 
       - name: Build FFmpeg (macOS/Linux)

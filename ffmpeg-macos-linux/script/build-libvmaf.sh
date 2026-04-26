@@ -50,7 +50,11 @@ prepareMeson
 # prepare build
 cd "vmaf-$VERSION/libvmaf/"
 checkStatus $? "change directory failed"
-meson build --prefix "$TOOL_DIR" --libdir=lib --buildtype release --default-library static
+MESON_ARGS="--prefix \"$TOOL_DIR\" --libdir=lib --buildtype release --default-library static"
+if isMsys; then
+    MESON_ARGS="$MESON_ARGS -Denable_tests=false"
+fi
+eval "meson build $MESON_ARGS"
 checkStatus $? "configuration failed"
 
 # build
@@ -66,3 +70,7 @@ checkStatus $? "installation failed"
 # https://github.com/Netflix/vmaf/issues/788
 sed -i.original -e 's/lvmaf/lvmaf -lstdc++/g' $TOOL_DIR/lib/pkgconfig/libvmaf.pc
 checkStatus $? "modify pkg-config .pc file failed"
+if isMsys; then
+    sed -i.original -e 's/lvmaf -lstdc++/lvmaf -lstdc++ -lpthread/g' $TOOL_DIR/lib/pkgconfig/libvmaf.pc
+    checkStatus $? "modify Windows pkg-config .pc file failed"
+fi
