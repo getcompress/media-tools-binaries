@@ -85,11 +85,11 @@ jobs:
           fi
 
           if [[ "${{ inputs.build_windows_x64 }}" == "true" ]]; then
-            add_row '{"platform":"windows","artifact_arch":"x64","runner":"windows-latest","target_arch":"","macos_min":"","msystem":"MINGW64","mingw_packages":"mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja","ffmpeg_arch":"x86_64","rust_target":"x86_64-pc-windows-gnu","vpx_target":"x86_64-win64-gcc","artifact_bin":"ffmpeg.exe"}'
+            add_row '{"platform":"windows","artifact_arch":"x64","runner":"windows-latest","target_arch":"","macos_min":"","msystem":"MINGW64","mingw_packages":"mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-pkgconf","ffmpeg_arch":"x86_64","rust_target":"x86_64-pc-windows-gnu","vpx_target":"x86_64-win64-gcc","artifact_bin":"ffmpeg.exe"}'
           fi
 
           if [[ "${{ inputs.build_windows_arm64 }}" == "true" ]]; then
-            add_row '{"platform":"windows","artifact_arch":"arm64","runner":"windows-11-arm","target_arch":"","macos_min":"","msystem":"CLANGARM64","mingw_packages":"mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-cmake mingw-w64-clang-aarch64-ninja","ffmpeg_arch":"arm64","rust_target":"aarch64-pc-windows-gnullvm","vpx_target":"arm64-win64-clang","artifact_bin":"ffmpeg.exe"}'
+            add_row '{"platform":"windows","artifact_arch":"arm64","runner":"windows-11-arm","target_arch":"","macos_min":"","msystem":"CLANGARM64","mingw_packages":"mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-cmake mingw-w64-clang-aarch64-ninja mingw-w64-clang-aarch64-pkgconf","ffmpeg_arch":"arm64","rust_target":"aarch64-pc-windows-gnullvm","vpx_target":"arm64-win64-clang","artifact_bin":"ffmpeg.exe"}'
           fi
 
           printf 'build_matrix=[%s]\n' "$rows" >> "$GITHUB_OUTPUT"

@@ -22,6 +22,25 @@ TOOL_DIR=$3
 # load functions
 . $SCRIPT_DIR/functions.sh
 
+if isMsys; then
+    SYSTEM_PKG_CONFIG="$(command -v pkg-config 2> /dev/null || command -v pkgconf 2> /dev/null)"
+    if [ -z "$SYSTEM_PKG_CONFIG" ]; then
+        echo "pkg-config/pkgconf was not found in PATH; install it via MSYS2 packages"
+        exit 1
+    fi
+
+    mkdir -p "$TOOL_DIR/bin"
+    checkStatus $? "create tool bin directory failed"
+
+    ln -sf "$SYSTEM_PKG_CONFIG" "$TOOL_DIR/bin/pkg-config"
+    checkStatus $? "link pkg-config failed"
+
+    echo "use Windows pkg-config from $SYSTEM_PKG_CONFIG"
+    "$TOOL_DIR/bin/pkg-config" --version
+    checkStatus $? "run pkg-config failed"
+    exit 0
+fi
+
 # load version
 VERSION=$(cat "$SCRIPT_DIR/../version/pkg-config")
 checkStatus $? "load version failed"
@@ -49,6 +68,11 @@ checkStatus $? "change directory failed"
 DETECTED_OS="$(uname -o 2> /dev/null)"
 echo "detected OS: $DETECTED_OS"
 if [ $DETECTED_OS = "Msys" ]; then
+    # pkg-config 0.29.2 vendors an older GLib snapshot that uses "bool" as a
+    # struct field name; GCC in newer MSYS2 toolchains treats bool as a keyword.
+    appendFlag CFLAGS "-std=gnu17"
+    appendFlag CXXFLAGS "-std=gnu++17"
+
     # download patches
     # https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-pkg-config
     echo "download patches for windows"
