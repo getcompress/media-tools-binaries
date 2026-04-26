@@ -276,7 +276,9 @@ jobs:
           $Root = (Get-Location).Path
           $BuildDir = Join-Path $Root "build"
           $DistDir = Join-Path $Root "output"
-          $VcpkgRoot = $Env:VCPKG_ROOT
+          $VcpkgRoot = if ($Env:VCPKG_INSTALLATION_ROOT -and (Test-Path $Env:VCPKG_INSTALLATION_ROOT)) { $Env:VCPKG_INSTALLATION_ROOT } `
+                       elseif ($Env:VCPKG_ROOT -and (Test-Path $Env:VCPKG_ROOT)) { $Env:VCPKG_ROOT } `
+                       else { throw "vcpkg root not found (checked VCPKG_INSTALLATION_ROOT, VCPKG_ROOT)" }
           $VcpkgInstalled = Join-Path $VcpkgRoot "installed\$Env:VCPKG_TRIPLET"
 
           if (Test-Path $BuildDir) { Remove-Item -Recurse -Force $BuildDir }
@@ -469,7 +471,10 @@ jobs:
 
           $DistDir = Join-Path (Get-Location).Path "output"
           $LicensesMd = Join-Path $DistDir "LICENSES-ALL.md"
-          $VcpkgInstalled = Join-Path $Env:VCPKG_ROOT "installed\$Env:VCPKG_TRIPLET"
+          $VcpkgRoot = if ($Env:VCPKG_INSTALLATION_ROOT -and (Test-Path $Env:VCPKG_INSTALLATION_ROOT)) { $Env:VCPKG_INSTALLATION_ROOT } `
+                       elseif ($Env:VCPKG_ROOT -and (Test-Path $Env:VCPKG_ROOT)) { $Env:VCPKG_ROOT } `
+                       else { throw "vcpkg root not found (checked VCPKG_INSTALLATION_ROOT, VCPKG_ROOT)" }
+          $VcpkgInstalled = Join-Path $VcpkgRoot "installed\$Env:VCPKG_TRIPLET"
 
           $QpdfLicense = Join-Path (Get-Location).Path "LICENSE.txt"
           $OpensslLicense = Join-Path $VcpkgInstalled "share\openssl\copyright"
