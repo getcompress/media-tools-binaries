@@ -105,14 +105,8 @@ cmakePolicyCompatArgs(){
     SRT_CMAKE_POLICY_MINIMUM_VERSION="3.5"
 
     command -v cmake > /dev/null 2>&1 || return
-    CMAKE_MAJOR_VERSION=$(cmake --version | head -n 1 | grep -Eo '[0-9]+' | head -n 1)
+    CMAKE_MAJOR_VERSION=$(cmake --version | head -n 1 | grep -Eo 'cmake version [0-9]+' | grep -Eo '[0-9]+')
     [ -n "$CMAKE_MAJOR_VERSION" ] || return
-
-    case "$CMAKE_MAJOR_VERSION" in
-        ''|*[!0-9]*)
-            return
-            ;;
-    esac
 
     if [ "$CMAKE_MAJOR_VERSION" -ge 4 ]; then
         # CMake 4 drops compatibility for projects declaring a minimum below 3.5.
