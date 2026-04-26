@@ -68,11 +68,11 @@ cmake $(cmakeTargetArgs) \
 checkStatus $? "configuration failed"
 
 # build
-make -j $CPUS
+cmakeBuild "$CPUS"
 checkStatus $? "build failed"
 
 # install
-make install
+cmakeInstall
 checkStatus $? "installation failed"
 
 # post-installation

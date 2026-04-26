@@ -101,6 +101,14 @@ cmakeTargetArgs(){
     fi
 }
 
+cmakeBuild(){
+    cmake --build . --parallel "$1"
+}
+
+cmakeInstall(){
+    cmake --install .
+}
+
 useToolPkgConfig(){
     TOOL_DIR=$1
 
