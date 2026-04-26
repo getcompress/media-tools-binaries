@@ -105,7 +105,7 @@ cmakePolicyCompatArgs(){
     SRT_CMAKE_POLICY_MINIMUM_VERSION="3.5"
 
     command -v cmake > /dev/null 2>&1 || return
-    CMAKE_MAJOR_VERSION=$(cmake --version | head -n 1 | grep -Eo 'cmake version [0-9]+' | grep -Eo '[0-9]+')
+    CMAKE_MAJOR_VERSION=$(cmake --version | head -n 1 | sed -n 's/cmake version \([0-9]\+\).*/\1/p')
     [ -n "$CMAKE_MAJOR_VERSION" ] || return
 
     if [ "$CMAKE_MAJOR_VERSION" -ge 4 ]; then
