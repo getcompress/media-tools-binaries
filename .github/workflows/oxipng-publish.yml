@@ -10,7 +10,7 @@ on:
 
 jobs:
   build:
-    name: build-${{ matrix.artifact_arch }}
+    name: build-${{ matrix.platform }}-${{ matrix.artifact_arch }}
     runs-on: ${{ matrix.runner }}
     permissions: { contents: read }
 
@@ -18,21 +18,44 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - artifact_arch: arm64
+          - platform: macos
+            artifact_arch: arm64
             arch: arm64
             rust_target: aarch64-apple-darwin
             macos_min: '11.0'
             runner: macos-latest
-          - artifact_arch: x64
+          - platform: macos
+            artifact_arch: x64
             arch: x86_64
             rust_target: x86_64-apple-darwin
-            macos_min: '10.13'
+            macos_min: '10.15'
             runner: macos-15-intel
+          - platform: linux
+            artifact_arch: x64
+            arch: x86_64
+            rust_target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - platform: linux
+            artifact_arch: arm64
+            arch: aarch64
+            rust_target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+          - platform: windows
+            artifact_arch: x64
+            arch: x86_64
+            rust_target: x86_64-pc-windows-msvc
+            runner: windows-latest
+          - platform: windows
+            artifact_arch: arm64
+            arch: aarch64
+            rust_target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
 
     env:
       MACOS_MIN: ${{ matrix.macos_min }}
       OXIPNG_ARTIFACT_ARCH: ${{ matrix.artifact_arch }}
       OXIPNG_BUILD_ARCH: ${{ matrix.arch }}
+      OXIPNG_PLATFORM: ${{ matrix.platform }}
       OXIPNG_REF: ${{ github.event.inputs.tag }}
       OXIPNG_RUST_TARGET: ${{ matrix.rust_target }}
 
@@ -49,13 +72,14 @@ jobs:
         shell: bash
         run: cargo install cargo-about --version 0.8.4 --locked
 
-      - name: Build oxipng
+      - name: Build oxipng (macOS)
+        if: matrix.platform == 'macos'
         working-directory: oxipng
         shell: bash
         run: |
           set -euo pipefail
 
-          DIST_DIR="${{ github.workspace }}/dist/oxipng-${OXIPNG_REF}-macos-${OXIPNG_ARTIFACT_ARCH}"
+          DIST_DIR="${{ github.workspace }}/dist/oxipng-${OXIPNG_REF}-${OXIPNG_PLATFORM}-${OXIPNG_ARTIFACT_ARCH}"
 
           rm -rf "$DIST_DIR"
           mkdir -p "$DIST_DIR"
@@ -90,18 +114,79 @@ jobs:
           echo "==> Verifying macOS deployment target"
           DEPLOYMENT_INFO="$(vtool -show-build "$DIST_DIR/oxipng" 2>/dev/null || otool -l "$DIST_DIR/oxipng")"
           echo "$DEPLOYMENT_INFO"
-          if [ "$OXIPNG_BUILD_ARCH" = "x86_64" ] && ! echo "$DEPLOYMENT_INFO" | grep -Eq 'minos 10\.13|version 10\.13'; then
-            echo "ERROR: expected x64 oxipng binary to target macOS 10.13"
+          if [ "$OXIPNG_BUILD_ARCH" = "x86_64" ] && ! echo "$DEPLOYMENT_INFO" | grep -Eq 'minos 10\.15|version 10\.15'; then
+            echo "ERROR: expected x64 oxipng binary to target macOS 10.15"
             exit 1
           fi
 
-      - name: Assemble license notices
+      - name: Build oxipng (Linux)
+        if: matrix.platform == 'linux'
         working-directory: oxipng
         shell: bash
         run: |
           set -euo pipefail
 
-          DIST_DIR="${{ github.workspace }}/dist/oxipng-${OXIPNG_REF}-macos-${OXIPNG_ARTIFACT_ARCH}"
+          DIST_DIR="${{ github.workspace }}/dist/oxipng-${OXIPNG_REF}-${OXIPNG_PLATFORM}-${OXIPNG_ARTIFACT_ARCH}"
+
+          rm -rf "$DIST_DIR"
+          mkdir -p "$DIST_DIR"
+
+          rustup target add "$OXIPNG_RUST_TARGET"
+
+          cargo build --release --locked --target "$OXIPNG_RUST_TARGET" --package oxipng --bin oxipng
+
+          cp "target/${OXIPNG_RUST_TARGET}/release/oxipng" "$DIST_DIR/oxipng"
+          chmod +x "$DIST_DIR/oxipng"
+          strip "$DIST_DIR/oxipng" || true
+
+          echo "==> Verifying binary"
+          file "$DIST_DIR/oxipng"
+          if [[ "${OXIPNG_BUILD_ARCH}" == "x86_64" ]] && ! file "$DIST_DIR/oxipng" | grep -q 'x86-64'; then
+            echo "ERROR: expected x86_64 binary"
+            exit 1
+          fi
+          if [[ "${OXIPNG_BUILD_ARCH}" == "aarch64" ]] && ! file "$DIST_DIR/oxipng" | grep -qE 'ARM aarch64|aarch64'; then
+            echo "ERROR: expected aarch64 binary"
+            exit 1
+          fi
+
+          echo "==> Verifying linked libraries"
+          ldd "$DIST_DIR/oxipng"
+          if ldd "$DIST_DIR/oxipng" | grep -E "${GITHUB_WORKSPACE}|/opt/hostedtoolcache|/home/linuxbrew|not found" >/dev/null; then
+            echo "ERROR: Linux binary leaked a runner-specific dependency"
+            exit 1
+          fi
+
+      - name: Build oxipng (Windows)
+        if: matrix.platform == 'windows'
+        working-directory: oxipng
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $DistDir = Join-Path $Env:GITHUB_WORKSPACE "dist\oxipng-$Env:OXIPNG_REF-$Env:OXIPNG_PLATFORM-$Env:OXIPNG_ARTIFACT_ARCH"
+
+          if (Test-Path $DistDir) { Remove-Item -Recurse -Force $DistDir }
+          New-Item -ItemType Directory -Path $DistDir | Out-Null
+
+          rustup target add $Env:OXIPNG_RUST_TARGET
+
+          $Env:RUSTFLAGS = '-C target-feature=+crt-static'
+          cargo build --release --locked --target $Env:OXIPNG_RUST_TARGET --package oxipng --bin oxipng
+
+          Copy-Item "target\$Env:OXIPNG_RUST_TARGET\release\oxipng.exe" "$DistDir\oxipng.exe"
+
+          Write-Host "==> Verifying binary"
+          & "$DistDir\oxipng.exe" --version
+
+      - name: Assemble license notices (macOS/Linux)
+        if: matrix.platform != 'windows'
+        working-directory: oxipng
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DIST_DIR="${{ github.workspace }}/dist/oxipng-${OXIPNG_REF}-${OXIPNG_PLATFORM}-${OXIPNG_ARTIFACT_ARCH}"
           LICENSES_MD="$DIST_DIR/LICENSES-ALL.md"
           ABOUT_CONFIG="$RUNNER_TEMP/oxipng-about.toml"
           ABOUT_TEMPLATE="$RUNNER_TEMP/oxipng-licenses.hbs"
@@ -123,6 +208,10 @@ jobs:
           targets = [
               "aarch64-apple-darwin",
               "x86_64-apple-darwin",
+              "x86_64-unknown-linux-gnu",
+              "aarch64-unknown-linux-gnu",
+              "x86_64-pc-windows-msvc",
+              "aarch64-pc-windows-msvc",
           ]
 
           ignore-dev-dependencies = true
@@ -154,17 +243,103 @@ jobs:
 
           test -s "$LICENSES_MD"
 
-      - name: Package artifact
+      - name: Assemble license notices (Windows)
+        if: matrix.platform == 'windows'
+        working-directory: oxipng
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $DistDir = Join-Path $Env:GITHUB_WORKSPACE "dist\oxipng-$Env:OXIPNG_REF-$Env:OXIPNG_PLATFORM-$Env:OXIPNG_ARTIFACT_ARCH"
+          $LicensesMd = Join-Path $DistDir "LICENSES-ALL.md"
+          $AboutConfig = Join-Path $Env:RUNNER_TEMP "oxipng-about.toml"
+          $AboutTemplate = Join-Path $Env:RUNNER_TEMP "oxipng-licenses.hbs"
+
+          @'
+          accepted = [
+              "Apache-2.0",
+              "MIT",
+              "BSD-2-Clause",
+              "BSD-3-Clause",
+              "ISC",
+              "Zlib",
+              "Unicode-3.0",
+              "Unicode-DFS-2016",
+              "CC0-1.0",
+              "BSL-1.0",
+          ]
+
+          targets = [
+              "aarch64-apple-darwin",
+              "x86_64-apple-darwin",
+              "x86_64-unknown-linux-gnu",
+              "aarch64-unknown-linux-gnu",
+              "x86_64-pc-windows-msvc",
+              "aarch64-pc-windows-msvc",
+          ]
+
+          ignore-dev-dependencies = true
+          '@ | Set-Content -Path $AboutConfig -Encoding UTF8
+
+          @'
+          {{#each licenses}}
+          ### License: {{name}}
+          #### Used by:
+          {{#each used_by}}
+          - [{{crate.name}} {{crate.version}}]({{#if crate.repository}}{{crate.repository}}{{else}}https://crates.io/crates/{{crate.name}}{{/if}})
+          {{/each}}
+          #### License text
+          ```
+          {{text}}
+          ```
+
+          {{/each}}
+          '@ | Set-Content -Path $AboutTemplate -Encoding UTF8
+
+          cargo about generate `
+            --config $AboutConfig `
+            --manifest-path Cargo.toml `
+            --workspace `
+            --locked `
+            --fail `
+            --output-file $LicensesMd `
+            $AboutTemplate
+
+          if (-not (Test-Path $LicensesMd) -or (Get-Item $LicensesMd).Length -eq 0) {
+            throw "LICENSES-ALL.md is empty or missing"
+          }
+
+      - name: Package artifact (macOS/Linux)
+        if: matrix.platform != 'windows'
+        shell: bash
         run: |
           zip -X -j \
-            "oxipng-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}.zip" \
-            "dist/oxipng-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}/oxipng" \
-            "dist/oxipng-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}/LICENSES-ALL.md"
+            "oxipng-${{ github.event.inputs.tag }}-${{ matrix.platform }}-${{ matrix.artifact_arch }}.zip" \
+            "dist/oxipng-${{ github.event.inputs.tag }}-${{ matrix.platform }}-${{ matrix.artifact_arch }}/oxipng" \
+            "dist/oxipng-${{ github.event.inputs.tag }}-${{ matrix.platform }}-${{ matrix.artifact_arch }}/LICENSES-ALL.md"
+
+      - name: Package artifact (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $Tag = $Env:OXIPNG_REF
+          $Platform = $Env:OXIPNG_PLATFORM
+          $Arch = $Env:OXIPNG_ARTIFACT_ARCH
+          $DistDir = Join-Path $Env:GITHUB_WORKSPACE "dist\oxipng-$Tag-$Platform-$Arch"
+          $ZipPath = Join-Path $Env:GITHUB_WORKSPACE "oxipng-$Tag-$Platform-$Arch.zip"
+
+          Add-Type -Assembly System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::Open($ZipPath, [System.IO.Compression.ZipArchiveMode]::Create)
+          [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, "$DistDir\oxipng.exe", "oxipng.exe")
+          [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, "$DistDir\LICENSES-ALL.md", "LICENSES-ALL.md")
+          $zip.Dispose()
 
       - name: Upload package
         uses: actions/upload-artifact@v7
         with:
-          path: oxipng-${{ github.event.inputs.tag }}-macos-${{ matrix.artifact_arch }}.zip
+          path: oxipng-${{ github.event.inputs.tag }}-${{ matrix.platform }}-${{ matrix.artifact_arch }}.zip
           if-no-files-found: error
           archive: false
 
@@ -177,7 +352,7 @@ jobs:
       - name: Download packages
         uses: actions/download-artifact@v8
         with:
-          pattern: oxipng-${{ github.event.inputs.tag }}-macos-*.zip
+          pattern: oxipng-${{ github.event.inputs.tag }}-*.zip
           path: release
           merge-multiple: true
           skip-decompress: true
