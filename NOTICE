@@ -1,0 +1,31 @@
+Repository licensing and attribution notice
+===========================================
+
+This repository is distributed under the GNU Affero General Public License,
+version 3 or any later version ("AGPL-3.0-or-later"), except for preserved
+license texts and notices that are included for attribution and compliance.
+
+FFmpeg build script provenance
+------------------------------
+
+The `ffmpeg-macos-linux/` subtree is derived from Martin Riedl's FFmpeg build
+script project:
+
+- Upstream repository: https://git.martin-riedl.de/ffmpeg/build-script.git
+
+The current files in this repository have been substantially modified by
+GetCompress and are distributed here as part of an AGPL-3.0-or-later
+repository.
+
+Preserved upstream Apache notice
+--------------------------------
+
+Because the subtree originated from upstream Apache-2.0 material, this
+repository preserves the upstream Apache-2.0 license text in:
+
+- `ffmpeg-macos-linux/LICENSE`
+
+That preserved Apache-2.0 text and the upstream attribution are retained for
+upstream-origin material and compliance. They do not change the fact that this
+repository, as distributed here, is AGPL-3.0-or-later, and they do not mean
+GetCompress-authored modifications are separately offered under Apache-2.0.

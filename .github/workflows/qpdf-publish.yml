@@ -1,0 +1,593 @@
+name: qpdf-publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to clone'
+        required: true
+        type: string
+
+jobs:
+  build:
+    name: build-${{ matrix.platform }}-${{ matrix.artifact_arch }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            artifact_arch: arm64
+            arch: arm64
+            macos_min: '11.0'
+            openssl_configure_target: darwin64-arm64-cc
+            runner: macos-latest
+          - platform: macos
+            artifact_arch: x64
+            arch: x86_64
+            macos_min: '10.15'
+            openssl_configure_target: darwin64-x86_64-cc
+            runner: macos-15-intel
+          - platform: linux
+            artifact_arch: x64
+            arch: x86_64
+            openssl_configure_target: linux-x86_64
+            runner: ubuntu-24.04
+          - platform: linux
+            artifact_arch: arm64
+            arch: aarch64
+            openssl_configure_target: linux-aarch64
+            runner: ubuntu-24.04-arm
+          - platform: windows
+            artifact_arch: x64
+            arch: x86_64
+            vcpkg_triplet: x64-windows-static
+            runner: windows-latest
+          - platform: windows
+            artifact_arch: arm64
+            arch: aarch64
+            vcpkg_triplet: arm64-windows-static
+            runner: windows-11-arm
+
+    env:
+      ARCH: ${{ matrix.arch }}
+      ARTIFACT_ARCH: ${{ matrix.artifact_arch }}
+      MACOS_MIN: ${{ matrix.macos_min }}
+      OPENSSL_CONFIGURE_TARGET: ${{ matrix.openssl_configure_target }}
+      OPENSSL_VERSION: '3.6.2'
+      PLATFORM: ${{ matrix.platform }}
+      QPDF_REF: ${{ github.event.inputs.tag }}
+      VCPKG_TRIPLET: ${{ matrix.vcpkg_triplet }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install macOS build deps
+        if: matrix.platform == 'macos'
+        run: brew install jpeg-turbo
+
+      - name: Install Linux build deps
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            libjpeg-turbo8-dev \
+            perl \
+            zlib1g-dev
+
+      - name: Checkout qpdf
+        uses: actions/checkout@v6
+        with:
+          repository: qpdf/qpdf
+          ref: ${{ github.event.inputs.tag }}
+          path: qpdf
+
+      - name: Build self-contained qpdf (macOS)
+        if: matrix.platform == 'macos'
+        working-directory: qpdf
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ROOT="$(pwd)"
+          BUILD_DIR="$ROOT/build"
+          DIST_DIR="$ROOT/output"
+          DEPS_DIR="$ROOT/.deps-macos-${ARCH}"
+          OPENSSL_SRC_DIR="$DEPS_DIR/src/openssl-${OPENSSL_VERSION}"
+          OPENSSL_PREFIX="$DEPS_DIR/openssl"
+          JPEG_TURBO_PREFIX="$(brew --prefix jpeg-turbo)"
+
+          rm -rf "$BUILD_DIR" "$DIST_DIR" "$DEPS_DIR"
+          mkdir -p "$DIST_DIR" "$DEPS_DIR/src"
+
+          rm -f "${JPEG_TURBO_PREFIX}/lib/"*.dylib || true
+
+          echo "==> Downloading OpenSSL ${OPENSSL_VERSION}"
+          curl -fL \
+            "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" \
+            -o "$DEPS_DIR/src/openssl.tar.gz"
+
+          tar -xzf "$DEPS_DIR/src/openssl.tar.gz" -C "$DEPS_DIR/src"
+
+          echo "==> Building OpenSSL (static, no modules)"
+          pushd "$OPENSSL_SRC_DIR" >/dev/null
+          export MACOSX_DEPLOYMENT_TARGET="${MACOS_MIN}"
+          perl ./Configure "${OPENSSL_CONFIGURE_TARGET}" \
+            no-shared \
+            no-module \
+            no-tests \
+            --prefix="$OPENSSL_PREFIX"
+          make -j"$(sysctl -n hw.ncpu)"
+          make install_sw
+          popd >/dev/null
+
+          echo "==> Configuring qpdf"
+          cmake -S . -B "$BUILD_DIR" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="${ARCH}" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="${MACOS_MIN}" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_STATIC_LIBS=ON \
+            -DBUILD_DOC=OFF \
+            -DINSTALL_EXAMPLES=OFF \
+            -DINSTALL_PKGCONFIG=OFF \
+            -DINSTALL_CMAKE_PACKAGE=OFF \
+            -DUSE_IMPLICIT_CRYPTO=0 \
+            -DREQUIRE_CRYPTO_NATIVE=ON \
+            -DREQUIRE_CRYPTO_OPENSSL=ON \
+            -DDEFAULT_CRYPTO=native \
+            -DOPENSSL_USE_STATIC_LIBS=TRUE \
+            -DCMAKE_PREFIX_PATH="${JPEG_TURBO_PREFIX};${OPENSSL_PREFIX}" \
+            -DCMAKE_FIND_LIBRARY_SUFFIXES=".a" \
+            -DCMAKE_FIND_FRAMEWORK=LAST \
+            -DCMAKE_FIND_APPBUNDLE=NEVER \
+            -DCMAKE_EXE_LINKER_FLAGS="-L${JPEG_TURBO_PREFIX}/lib -L${OPENSSL_PREFIX}/lib -Wl,-dead_strip"
+
+          echo "==> Building qpdf"
+          cmake --build "$BUILD_DIR" --config Release --parallel --target qpdf
+
+          QPDF_BIN="$(find "$BUILD_DIR" -type f -name qpdf -perm -111 | head -n1)"
+          test -n "$QPDF_BIN"
+
+          cp "$QPDF_BIN" "$DIST_DIR/qpdf"
+          chmod +x "$DIST_DIR/qpdf"
+          strip -x "$DIST_DIR/qpdf" || true
+
+          echo "==> Verifying crypto providers"
+          "$DIST_DIR/qpdf" --show-crypto | tee "$BUILD_DIR/crypto-providers.txt"
+
+          echo "==> Verifying linked dylibs"
+          otool -L "$DIST_DIR/qpdf" | tee "$BUILD_DIR/linked-libraries.txt"
+
+          if otool -L "$DIST_DIR/qpdf" | grep -E '/opt/homebrew|/usr/local/(Cellar|opt)' >/dev/null; then
+            echo "ERROR: Homebrew runtime dependency leaked into final qpdf binary"
+            exit 1
+          fi
+
+      - name: Build self-contained qpdf (Linux)
+        if: matrix.platform == 'linux'
+        working-directory: qpdf
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ROOT="$(pwd)"
+          BUILD_DIR="$ROOT/build"
+          DIST_DIR="$ROOT/output"
+          DEPS_DIR="$ROOT/.deps-linux-${ARCH}"
+          OPENSSL_SRC_DIR="$DEPS_DIR/src/openssl-${OPENSSL_VERSION}"
+          OPENSSL_PREFIX="$DEPS_DIR/openssl"
+          MULTIARCH="$(dpkg-architecture -qDEB_HOST_MULTIARCH)"
+
+          rm -rf "$BUILD_DIR" "$DIST_DIR" "$DEPS_DIR"
+          mkdir -p "$DIST_DIR" "$DEPS_DIR/src"
+
+          echo "==> Downloading OpenSSL ${OPENSSL_VERSION}"
+          curl -fL \
+            "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" \
+            -o "$DEPS_DIR/src/openssl.tar.gz"
+
+          tar -xzf "$DEPS_DIR/src/openssl.tar.gz" -C "$DEPS_DIR/src"
+
+          echo "==> Building OpenSSL (static, no modules)"
+          pushd "$OPENSSL_SRC_DIR" >/dev/null
+          perl ./Configure "${OPENSSL_CONFIGURE_TARGET}" \
+            no-shared \
+            no-module \
+            no-tests \
+            --prefix="$OPENSSL_PREFIX"
+          make -j"$(nproc)"
+          make install_sw
+          popd >/dev/null
+
+          echo "==> Configuring qpdf"
+          cmake -S . -B "$BUILD_DIR" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_STATIC_LIBS=ON \
+            -DBUILD_DOC=OFF \
+            -DINSTALL_EXAMPLES=OFF \
+            -DINSTALL_PKGCONFIG=OFF \
+            -DINSTALL_CMAKE_PACKAGE=OFF \
+            -DUSE_IMPLICIT_CRYPTO=0 \
+            -DREQUIRE_CRYPTO_NATIVE=ON \
+            -DREQUIRE_CRYPTO_OPENSSL=ON \
+            -DDEFAULT_CRYPTO=native \
+            -DOPENSSL_ROOT_DIR="${OPENSSL_PREFIX}" \
+            -DOPENSSL_USE_STATIC_LIBS=TRUE \
+            -DJPEG_LIBRARY="/usr/lib/${MULTIARCH}/libjpeg.a" \
+            -DJPEG_INCLUDE_DIR="/usr/include" \
+            -DZLIB_LIBRARY="/usr/lib/${MULTIARCH}/libz.a" \
+            -DZLIB_INCLUDE_DIR="/usr/include" \
+            -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++"
+
+          echo "==> Building qpdf"
+          cmake --build "$BUILD_DIR" --config Release --parallel --target qpdf
+
+          QPDF_BIN="$(find "$BUILD_DIR" -type f -name qpdf -perm -111 | head -n1)"
+          test -n "$QPDF_BIN"
+
+          cp "$QPDF_BIN" "$DIST_DIR/qpdf"
+          chmod +x "$DIST_DIR/qpdf"
+          strip "$DIST_DIR/qpdf" || true
+
+          echo "==> Verifying crypto providers"
+          "$DIST_DIR/qpdf" --show-crypto
+
+          echo "==> Verifying binary architecture"
+          file "$DIST_DIR/qpdf"
+          if [[ "${ARCH}" == "x86_64" ]] && ! file "$DIST_DIR/qpdf" | grep -q 'x86-64'; then
+            echo "ERROR: expected x86_64 binary"
+            exit 1
+          fi
+          if [[ "${ARCH}" == "aarch64" ]] && ! file "$DIST_DIR/qpdf" | grep -qE 'ARM aarch64|aarch64'; then
+            echo "ERROR: expected aarch64 binary"
+            exit 1
+          fi
+
+          echo "==> Verifying linked libraries"
+          ldd "$DIST_DIR/qpdf"
+          if ldd "$DIST_DIR/qpdf" | grep -E "${GITHUB_WORKSPACE}|/opt/hostedtoolcache|/home/linuxbrew|not found" >/dev/null; then
+            echo "ERROR: Linux binary leaked a runner-specific dependency"
+            exit 1
+          fi
+
+      - name: Install Windows build deps
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          vcpkg install "openssl:$Env:VCPKG_TRIPLET" "libjpeg-turbo:$Env:VCPKG_TRIPLET" "zlib:$Env:VCPKG_TRIPLET"
+
+      - name: Build self-contained qpdf (Windows)
+        if: matrix.platform == 'windows'
+        working-directory: qpdf
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $Root = (Get-Location).Path
+          $BuildDir = Join-Path $Root "build"
+          $DistDir = Join-Path $Root "output"
+          $VcpkgRoot = if ($Env:VCPKG_INSTALLATION_ROOT -and (Test-Path $Env:VCPKG_INSTALLATION_ROOT)) { $Env:VCPKG_INSTALLATION_ROOT } `
+                       elseif ($Env:VCPKG_ROOT -and (Test-Path $Env:VCPKG_ROOT)) { $Env:VCPKG_ROOT } `
+                       else { throw "vcpkg root not found (checked VCPKG_INSTALLATION_ROOT, VCPKG_ROOT)" }
+          $VcpkgInstalled = Join-Path $VcpkgRoot "installed\$Env:VCPKG_TRIPLET"
+
+          if (Test-Path $BuildDir) { Remove-Item -Recurse -Force $BuildDir }
+          if (Test-Path $DistDir) { Remove-Item -Recurse -Force $DistDir }
+          New-Item -ItemType Directory -Path $DistDir | Out-Null
+
+          Write-Host "==> Configuring qpdf"
+          cmake -S . -B $BuildDir `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DBUILD_SHARED_LIBS=OFF `
+            -DBUILD_STATIC_LIBS=ON `
+            -DBUILD_DOC=OFF `
+            -DINSTALL_EXAMPLES=OFF `
+            -DINSTALL_PKGCONFIG=OFF `
+            -DINSTALL_CMAKE_PACKAGE=OFF `
+            -DUSE_IMPLICIT_CRYPTO=0 `
+            -DREQUIRE_CRYPTO_NATIVE=ON `
+            -DREQUIRE_CRYPTO_OPENSSL=ON `
+            -DDEFAULT_CRYPTO=native `
+            -DOPENSSL_USE_STATIC_LIBS=TRUE `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DCMAKE_SYSTEM_VERSION=10.0 `
+            "-DCMAKE_EXE_LINKER_FLAGS=ws2_32.lib crypt32.lib" `
+            "-DCMAKE_TOOLCHAIN_FILE=$VcpkgRoot\scripts\buildsystems\vcpkg.cmake" `
+            "-DVCPKG_TARGET_TRIPLET=$Env:VCPKG_TRIPLET" `
+            "-DCMAKE_PREFIX_PATH=$VcpkgInstalled"
+
+          Write-Host "==> Building qpdf"
+          cmake --build $BuildDir --config Release --parallel --target qpdf
+
+          $QpdfBin = Get-ChildItem -Recurse -Path $BuildDir -Filter "qpdf.exe" | Select-Object -First 1
+          if (-not $QpdfBin) { throw "qpdf.exe not found after build" }
+
+          Copy-Item $QpdfBin.FullName "$DistDir\qpdf.exe"
+
+          Write-Host "==> Verifying binary"
+          & "$DistDir\qpdf.exe" --version
+          & "$DistDir\qpdf.exe" --show-crypto
+
+      - name: Assemble license notices (macOS)
+        if: matrix.platform == 'macos'
+        working-directory: qpdf
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DIST_DIR="$PWD/output"
+          DEPS_DIR="$PWD/.deps-macos-${ARCH}"
+          OPENSSL_SRC_DIR="$DEPS_DIR/src/openssl-${OPENSSL_VERSION}"
+          JPEG_TURBO_PREFIX="$(brew --prefix jpeg-turbo)"
+          JPEG_TURBO_VERSION="$(brew list --versions jpeg-turbo | awk '{ print $2; exit }')"
+          ZLIB_H="$(xcrun --show-sdk-path)/usr/include/zlib.h"
+          ZLIB_VERSION="$(awk '/^#define ZLIB_VERSION / { gsub(/"/, "", $3); print $3; exit }' "$ZLIB_H")"
+          LICENSES_MD="$DIST_DIR/LICENSES-ALL.md"
+
+          test -s LICENSE.txt
+          test -s "$OPENSSL_SRC_DIR/LICENSE.txt"
+          test -s "$JPEG_TURBO_PREFIX/LICENSE.md"
+          test -s "$ZLIB_H"
+
+          : > "$LICENSES_MD"
+
+          printf '### License: Apache-2.0\n' >> "$LICENSES_MD"
+          printf '#### Used by: [qpdf %s](https://github.com/qpdf/qpdf)\n' "$QPDF_REF" >> "$LICENSES_MD"
+          printf '#### License text\n```\n' >> "$LICENSES_MD"
+          cat LICENSE.txt >> "$LICENSES_MD"
+          if [ -s NOTICE.md ]; then
+            printf '\n\n--- NOTICE.md ---\n\n' >> "$LICENSES_MD"
+            cat NOTICE.md >> "$LICENSES_MD"
+          elif [ -s NOTICE ]; then
+            printf '\n\n--- NOTICE ---\n\n' >> "$LICENSES_MD"
+            cat NOTICE >> "$LICENSES_MD"
+          fi
+          printf '\n```\n\n' >> "$LICENSES_MD"
+
+          if [ -s Artistic-2.0 ]; then
+            printf '### License: Artistic-2.0\n' >> "$LICENSES_MD"
+            printf '#### Used by: [qpdf %s](https://github.com/qpdf/qpdf)\n' "$QPDF_REF" >> "$LICENSES_MD"
+            printf '#### License text\n```\n' >> "$LICENSES_MD"
+            cat Artistic-2.0 >> "$LICENSES_MD"
+            printf '\n```\n\n' >> "$LICENSES_MD"
+          fi
+
+          printf '### License: Apache-2.0\n' >> "$LICENSES_MD"
+          printf '#### Used by: [OpenSSL %s](https://github.com/openssl/openssl)\n' "$OPENSSL_VERSION" >> "$LICENSES_MD"
+          printf '#### License text\n```\n' >> "$LICENSES_MD"
+          cat "$OPENSSL_SRC_DIR/LICENSE.txt" >> "$LICENSES_MD"
+          if [ -s "$OPENSSL_SRC_DIR/NOTICE.txt" ]; then
+            printf '\n\n--- NOTICE.txt ---\n\n' >> "$LICENSES_MD"
+            cat "$OPENSSL_SRC_DIR/NOTICE.txt" >> "$LICENSES_MD"
+          fi
+          printf '\n```\n\n' >> "$LICENSES_MD"
+
+          printf '### License: IJG AND Zlib AND BSD-3-Clause\n' >> "$LICENSES_MD"
+          printf '#### Used by: [libjpeg-turbo %s](https://github.com/libjpeg-turbo/libjpeg-turbo)\n' "$JPEG_TURBO_VERSION" >> "$LICENSES_MD"
+          printf '#### License text\n```\n' >> "$LICENSES_MD"
+          cat "$JPEG_TURBO_PREFIX/LICENSE.md" >> "$LICENSES_MD"
+          if [ -s "$JPEG_TURBO_PREFIX/share/doc/libjpeg-turbo/README.ijg" ]; then
+            printf '\n\n--- README.ijg ---\n\n' >> "$LICENSES_MD"
+            cat "$JPEG_TURBO_PREFIX/share/doc/libjpeg-turbo/README.ijg" >> "$LICENSES_MD"
+          fi
+          printf '\n```\n\n' >> "$LICENSES_MD"
+
+          printf '### License: Zlib\n' >> "$LICENSES_MD"
+          printf '#### Used by: [zlib %s](https://zlib.net/)\n' "$ZLIB_VERSION" >> "$LICENSES_MD"
+          printf '#### License text\n```\n' >> "$LICENSES_MD"
+          awk '
+            BEGIN { in_comment = 0 }
+            /^[[:space:]]*\/\*/ { in_comment = 1 }
+            in_comment { print }
+            /\*\// && in_comment { exit }
+          ' "$ZLIB_H" >> "$LICENSES_MD"
+          printf '\n```\n' >> "$LICENSES_MD"
+
+          test -s "$LICENSES_MD"
+
+      - name: Assemble license notices (Linux)
+        if: matrix.platform == 'linux'
+        working-directory: qpdf
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DIST_DIR="$PWD/output"
+          DEPS_DIR="$PWD/.deps-linux-${ARCH}"
+          OPENSSL_SRC_DIR="$DEPS_DIR/src/openssl-${OPENSSL_VERSION}"
+          JPEG_TURBO_VERSION="$(dpkg-query -W -f='${Version}' libjpeg-turbo8-dev 2>/dev/null | cut -d: -f2 | cut -d- -f1 || echo 'unknown')"
+          JPEG_TURBO_COPYRIGHT="/usr/share/doc/libjpeg-turbo8/copyright"
+          ZLIB_VERSION="$(dpkg-query -W -f='${Version}' zlib1g-dev 2>/dev/null | cut -d: -f2 | cut -d- -f1 || echo 'unknown')"
+          ZLIB_COPYRIGHT="/usr/share/doc/zlib1g/copyright"
+          LICENSES_MD="$DIST_DIR/LICENSES-ALL.md"
+
+          test -s LICENSE.txt
+          test -s "$OPENSSL_SRC_DIR/LICENSE.txt"
+          test -s "$JPEG_TURBO_COPYRIGHT"
+          test -s "$ZLIB_COPYRIGHT"
+
+          : > "$LICENSES_MD"
+
+          printf '### License: Apache-2.0\n' >> "$LICENSES_MD"
+          printf '#### Used by: [qpdf %s](https://github.com/qpdf/qpdf)\n' "$QPDF_REF" >> "$LICENSES_MD"
+          printf '#### License text\n```\n' >> "$LICENSES_MD"
+          cat LICENSE.txt >> "$LICENSES_MD"
+          if [ -s NOTICE.md ]; then
+            printf '\n\n--- NOTICE.md ---\n\n' >> "$LICENSES_MD"
+            cat NOTICE.md >> "$LICENSES_MD"
+          elif [ -s NOTICE ]; then
+            printf '\n\n--- NOTICE ---\n\n' >> "$LICENSES_MD"
+            cat NOTICE >> "$LICENSES_MD"
+          fi
+          printf '\n```\n\n' >> "$LICENSES_MD"
+
+          if [ -s Artistic-2.0 ]; then
+            printf '### License: Artistic-2.0\n' >> "$LICENSES_MD"
+            printf '#### Used by: [qpdf %s](https://github.com/qpdf/qpdf)\n' "$QPDF_REF" >> "$LICENSES_MD"
+            printf '#### License text\n```\n' >> "$LICENSES_MD"
+            cat Artistic-2.0 >> "$LICENSES_MD"
+            printf '\n```\n\n' >> "$LICENSES_MD"
+          fi
+
+          printf '### License: Apache-2.0\n' >> "$LICENSES_MD"
+          printf '#### Used by: [OpenSSL %s](https://github.com/openssl/openssl)\n' "$OPENSSL_VERSION" >> "$LICENSES_MD"
+          printf '#### License text\n```\n' >> "$LICENSES_MD"
+          cat "$OPENSSL_SRC_DIR/LICENSE.txt" >> "$LICENSES_MD"
+          if [ -s "$OPENSSL_SRC_DIR/NOTICE.txt" ]; then
+            printf '\n\n--- NOTICE.txt ---\n\n' >> "$LICENSES_MD"
+            cat "$OPENSSL_SRC_DIR/NOTICE.txt" >> "$LICENSES_MD"
+          fi
+          printf '\n```\n\n' >> "$LICENSES_MD"
+
+          printf '### License: IJG AND Zlib AND BSD-3-Clause\n' >> "$LICENSES_MD"
+          printf '#### Used by: [libjpeg-turbo %s](https://github.com/libjpeg-turbo/libjpeg-turbo)\n' "$JPEG_TURBO_VERSION" >> "$LICENSES_MD"
+          printf '#### License text\n```\n' >> "$LICENSES_MD"
+          cat "$JPEG_TURBO_COPYRIGHT" >> "$LICENSES_MD"
+          printf '\n```\n\n' >> "$LICENSES_MD"
+
+          printf '### License: Zlib\n' >> "$LICENSES_MD"
+          printf '#### Used by: [zlib %s](https://zlib.net/)\n' "$ZLIB_VERSION" >> "$LICENSES_MD"
+          printf '#### License text\n```\n' >> "$LICENSES_MD"
+          cat "$ZLIB_COPYRIGHT" >> "$LICENSES_MD"
+          printf '\n```\n' >> "$LICENSES_MD"
+
+          test -s "$LICENSES_MD"
+
+      - name: Assemble license notices (Windows)
+        if: matrix.platform == 'windows'
+        working-directory: qpdf
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $DistDir = Join-Path (Get-Location).Path "output"
+          $LicensesMd = Join-Path $DistDir "LICENSES-ALL.md"
+          $VcpkgRoot = if ($Env:VCPKG_INSTALLATION_ROOT -and (Test-Path $Env:VCPKG_INSTALLATION_ROOT)) { $Env:VCPKG_INSTALLATION_ROOT } `
+                       elseif ($Env:VCPKG_ROOT -and (Test-Path $Env:VCPKG_ROOT)) { $Env:VCPKG_ROOT } `
+                       else { throw "vcpkg root not found (checked VCPKG_INSTALLATION_ROOT, VCPKG_ROOT)" }
+          $VcpkgInstalled = Join-Path $VcpkgRoot "installed\$Env:VCPKG_TRIPLET"
+
+          $QpdfLicense = Join-Path (Get-Location).Path "LICENSE.txt"
+          $OpensslLicense = Join-Path $VcpkgInstalled "share\openssl\copyright"
+          $JpegLicense = Join-Path $VcpkgInstalled "share\libjpeg-turbo\copyright"
+          $ZlibLicense = Join-Path $VcpkgInstalled "share\zlib\copyright"
+
+          if (-not (Test-Path $QpdfLicense)) { throw "qpdf LICENSE.txt not found" }
+          if (-not (Test-Path $OpensslLicense)) { throw "OpenSSL copyright not found at $OpensslLicense" }
+          if (-not (Test-Path $JpegLicense)) { throw "libjpeg-turbo copyright not found at $JpegLicense" }
+          if (-not (Test-Path $ZlibLicense)) { throw "zlib copyright not found at $ZlibLicense" }
+
+          $Nl = "`n"
+          $Content = ""
+
+          $Content += "### License: Apache-2.0$Nl"
+          $Content += "#### Used by: [qpdf $Env:QPDF_REF](https://github.com/qpdf/qpdf)$Nl"
+          $Content += "#### License text$Nl``````$Nl"
+          $Content += (Get-Content $QpdfLicense -Raw)
+          $NoticeMd = Join-Path (Get-Location).Path "NOTICE.md"
+          $Notice = Join-Path (Get-Location).Path "NOTICE"
+          if (Test-Path $NoticeMd) {
+            $Content += "$Nl$Nl--- NOTICE.md ---$Nl$Nl"
+            $Content += (Get-Content $NoticeMd -Raw)
+          } elseif (Test-Path $Notice) {
+            $Content += "$Nl$Nl--- NOTICE ---$Nl$Nl"
+            $Content += (Get-Content $Notice -Raw)
+          }
+          $Content += "$Nl``````$Nl$Nl"
+
+          $Artistic = Join-Path (Get-Location).Path "Artistic-2.0"
+          if (Test-Path $Artistic) {
+            $Content += "### License: Artistic-2.0$Nl"
+            $Content += "#### Used by: [qpdf $Env:QPDF_REF](https://github.com/qpdf/qpdf)$Nl"
+            $Content += "#### License text$Nl``````$Nl"
+            $Content += (Get-Content $Artistic -Raw)
+            $Content += "$Nl``````$Nl$Nl"
+          }
+
+          $Content += "### License: Apache-2.0$Nl"
+          $Content += "#### Used by: [OpenSSL $Env:OPENSSL_VERSION](https://github.com/openssl/openssl)$Nl"
+          $Content += "#### License text$Nl``````$Nl"
+          $Content += (Get-Content $OpensslLicense -Raw)
+          $Content += "$Nl``````$Nl$Nl"
+
+          $Content += "### License: IJG AND Zlib AND BSD-3-Clause$Nl"
+          $Content += "#### Used by: [libjpeg-turbo](https://github.com/libjpeg-turbo/libjpeg-turbo)$Nl"
+          $Content += "#### License text$Nl``````$Nl"
+          $Content += (Get-Content $JpegLicense -Raw)
+          $Content += "$Nl``````$Nl$Nl"
+
+          $Content += "### License: Zlib$Nl"
+          $Content += "#### Used by: [zlib](https://zlib.net/)$Nl"
+          $Content += "#### License text$Nl``````$Nl"
+          $Content += (Get-Content $ZlibLicense -Raw)
+          $Content += "$Nl``````$Nl"
+
+          [System.IO.File]::WriteAllText($LicensesMd, $Content, [System.Text.Encoding]::UTF8)
+
+          if (-not (Test-Path $LicensesMd) -or (Get-Item $LicensesMd).Length -eq 0) {
+            throw "LICENSES-ALL.md is empty or missing"
+          }
+
+      - name: Package artifact (macOS/Linux)
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: |
+          zip -X -j \
+            "qpdf-${{ github.event.inputs.tag }}-${{ matrix.platform }}-${{ matrix.artifact_arch }}.zip" \
+            "qpdf/output/qpdf" \
+            "qpdf/output/LICENSES-ALL.md"
+
+      - name: Package artifact (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $DistDir = Join-Path $Env:GITHUB_WORKSPACE "qpdf\output"
+          $ZipPath = Join-Path $Env:GITHUB_WORKSPACE "qpdf-$Env:QPDF_REF-$Env:PLATFORM-$Env:ARTIFACT_ARCH.zip"
+
+          Add-Type -Assembly System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::Open($ZipPath, [System.IO.Compression.ZipArchiveMode]::Create)
+          [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, "$DistDir\qpdf.exe", "qpdf.exe")
+          [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, "$DistDir\LICENSES-ALL.md", "LICENSES-ALL.md")
+          $zip.Dispose()
+
+      - name: Upload package
+        uses: actions/upload-artifact@v7
+        with:
+          path: qpdf-${{ github.event.inputs.tag }}-${{ matrix.platform }}-${{ matrix.artifact_arch }}.zip
+          if-no-files-found: error
+          archive: false
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v8
+        with:
+          pattern: qpdf-${{ github.event.inputs.tag }}-*.zip
+          path: release
+          merge-multiple: true
+          skip-decompress: true
+
+      - uses: ncipollo/release-action@v1.21.0
+        with:
+          tag: qpdf-${{ github.event.inputs.tag }}
+          name: qpdf-${{ github.event.inputs.tag }}
+          artifacts: release/*.zip
+          allowUpdates: true
+          artifactErrorsFailBuild: true

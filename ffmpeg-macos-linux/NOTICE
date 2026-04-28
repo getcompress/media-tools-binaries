@@ -1,0 +1,20 @@
+FFmpeg subtree licensing and attribution notice
+===============================================
+
+This directory is distributed by GetCompress under the GNU Affero General
+Public License, version 3 or any later version ("AGPL-3.0-or-later"), as part
+of the `media-tools-binaries` repository.
+
+This subtree is derived from Martin Riedl's FFmpeg build script project:
+
+- https://git.martin-riedl.de/ffmpeg/build-script.git
+
+The current files in this repository have been substantially modified.
+
+The Apache-2.0 license text is preserved in `LICENSE` because upstream-origin
+material in this subtree derives from Apache-2.0-licensed upstream code.
+Preserving that text and the upstream attribution is required for compliance
+and does not make this subtree an Apache-2.0 project in this repository.
+
+GetCompress-authored modifications are not separately offered under
+Apache-2.0.

@@ -1,0 +1,370 @@
+{
+  "dependencies": [
+    {
+      "name": "ffmpeg",
+      "homepage": "https://ffmpeg.org/",
+      "license_expression": "GPL-2.0-only",
+      "version_key": "ffmpeg",
+      "source_glob": "source/ffmpeg/ffmpeg",
+      "source_urls": [
+        "https://ffmpeg.org/releases/ffmpeg-{{version}}.tar.bz2"
+      ],
+      "license_files": ["COPYING.GPLv2"]
+    },
+    {
+      "name": "aom",
+      "homepage": "https://aomedia.googlesource.com/aom/",
+      "license_expression": "BSD-2-Clause",
+      "version_key": "aom",
+      "source_glob": "source/aom/libaom-{{version}}",
+      "source_urls": [
+        "https://storage.googleapis.com/aom-releases/libaom-{{version}}.tar.gz"
+      ],
+      "license_files": ["LICENSE", "PATENTS"],
+      "skip_marker": "skip-aom"
+    },
+    {
+      "name": "libass",
+      "homepage": "https://github.com/libass/libass",
+      "license_expression": "ISC",
+      "version_key": "libass",
+      "source_glob": "source/libass/libass-{{version}}",
+      "source_urls": [
+        "https://github.com/libass/libass/releases/download/{{version}}/libass-{{version}}.tar.gz"
+      ],
+      "license_files": ["COPYING"]
+    },
+    {
+      "name": "libbluray",
+      "homepage": "https://www.videolan.org/developers/libbluray.html",
+      "license_expression": "LGPL-2.1-or-later",
+      "version_key": "libbluray",
+      "source_glob": "source/libbluray/libbluray-{{version}}",
+      "source_urls": [
+        "https://download.videolan.org/pub/videolan/libbluray/{{version}}/libbluray-{{version}}.tar.bz2"
+      ],
+      "license_files": ["COPYING"],
+      "skip_marker": "skip-libbluray"
+    },
+    {
+      "name": "dav1d",
+      "homepage": "https://code.videolan.org/videolan/dav1d",
+      "license_expression": "BSD-2-Clause",
+      "version_key": "dav1d",
+      "source_glob": "source/dav1d/dav1d-{{version}}",
+      "source_urls": [
+        "https://code.videolan.org/videolan/dav1d/-/archive/{{version}}/dav1d-{{version}}.tar.gz"
+      ],
+      "license_files": ["COPYING"],
+      "skip_marker": "skip-dav1d"
+    },
+    {
+      "name": "fontconfig",
+      "homepage": "https://www.freedesktop.org/wiki/Software/fontconfig/",
+      "license_expression": "MIT",
+      "version_key": "fontconfig",
+      "source_glob": "source/fontconfig/fontconfig-{{version}}",
+      "source_urls": [
+        "https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/{{version}}/fontconfig-{{version}}.tar.xz"
+      ],
+      "license_files": ["COPYING"]
+    },
+    {
+      "name": "freetype",
+      "homepage": "https://freetype.org/",
+      "license_expression": "FTL OR GPL-2.0-only",
+      "version_key": "freetype",
+      "source_glob": "source/freetype/freetype-{{version}}",
+      "source_urls": [
+        "https://download.savannah.gnu.org/releases/freetype/freetype-{{version}}.tar.gz",
+        "https://sourceforge.net/projects/freetype/files/freetype2/{{version}}/freetype-{{version}}.tar.gz/download"
+      ],
+      "license_files": ["LICENSE.TXT", "docs/FTL.TXT", "docs/GPLv2.TXT"]
+    },
+    {
+      "name": "fribidi",
+      "homepage": "https://github.com/fribidi/fribidi",
+      "license_expression": "LGPL-2.1-or-later",
+      "version_key": "fribidi",
+      "source_glob": "source/fribidi/fribidi-{{version}}",
+      "source_urls": [
+        "https://github.com/fribidi/fribidi/releases/download/v{{version}}/fribidi-{{version}}.tar.xz"
+      ],
+      "license_files": ["COPYING"]
+    },
+    {
+      "name": "harfbuzz",
+      "homepage": "https://github.com/harfbuzz/harfbuzz",
+      "license_expression": "MIT",
+      "version_key": "harfbuzz",
+      "source_glob": "source/harfbuzz/harfbuzz-{{version}}",
+      "source_urls": [
+        "https://github.com/harfbuzz/harfbuzz/releases/download/{{version}}/harfbuzz-{{version}}.tar.xz"
+      ],
+      "license_files": ["COPYING"],
+      "skip_marker": "skip-libharfbuzz"
+    },
+    {
+      "name": "lame",
+      "homepage": "https://lame.sourceforge.io/",
+      "license_expression": "LGPL-2.0-or-later",
+      "version_key": "lame",
+      "source_glob": "source/lame/lame-{{version}}",
+      "source_urls": [
+        "https://unlimited.dl.sourceforge.net/project/lame/lame/{{version}}/lame-{{version}}.tar.gz"
+      ],
+      "license_files": ["COPYING", "LICENSE"],
+      "skip_marker": "skip-lame"
+    },
+    {
+      "name": "libklvanc",
+      "homepage": "https://github.com/stoth68000/libklvanc",
+      "license_expression": "LGPL-2.1-or-later",
+      "version_key": "libklvanc",
+      "source_glob": "source/libklvanc/libklvanc-vid.obe.{{version}}",
+      "source_urls": [
+        "https://github.com/stoth68000/libklvanc/archive/refs/tags/vid.obe.{{version}}.tar.gz"
+      ],
+      "license_files": ["lgpl-2.1.txt"],
+      "skip_marker": "skip-libklvanc"
+    },
+    {
+      "name": "libogg",
+      "homepage": "https://xiph.org/ogg/",
+      "license_expression": "BSD-3-Clause",
+      "version_key": "libogg",
+      "source_glob": "source/libogg/libogg-{{version}}",
+      "source_urls": [
+        "https://ftp.osuosl.org/pub/xiph/releases/ogg/libogg-{{version}}.tar.gz"
+      ],
+      "license_files": ["COPYING"]
+    },
+    {
+      "name": "openh264",
+      "homepage": "https://www.openh264.org/",
+      "license_expression": "BSD-2-Clause",
+      "version_key": "openh264",
+      "source_glob": "source/openh264/openh264-{{version}}",
+      "source_urls": [
+        "https://github.com/cisco/openh264/archive/v{{version}}.tar.gz"
+      ],
+      "license_files": ["LICENSE"],
+      "skip_marker": "skip-openh264"
+    },
+    {
+      "name": "openjpeg",
+      "homepage": "https://www.openjpeg.org/",
+      "license_expression": "BSD-2-Clause",
+      "version_key": "openjpeg",
+      "source_glob": "source/openjpeg/openjpeg-{{version}}",
+      "source_urls": [
+        "https://github.com/uclouvain/openjpeg/archive/refs/tags/v{{version}}.tar.gz"
+      ],
+      "license_files": ["LICENSE"],
+      "skip_marker": "skip-openJPEG"
+    },
+    {
+      "name": "opus",
+      "homepage": "https://opus-codec.org/",
+      "license_expression": "BSD-3-Clause",
+      "version_key": "opus",
+      "source_glob": "source/opus/opus*{{version}}",
+      "source_urls": [
+        "https://downloads.xiph.org/releases/opus/opus-{{version}}.tar.gz",
+        "https://gitlab.xiph.org/xiph/opus/-/archive/v{{version}}/opus-v{{version}}.tar.gz"
+      ],
+      "license_files": ["COPYING"],
+      "skip_marker": "skip-opus"
+    },
+    {
+      "name": "rav1e",
+      "homepage": "https://github.com/xiph/rav1e",
+      "license_expression": "BSD-2-Clause",
+      "version_key": "rav1e",
+      "source_glob": "source/rav1e/rav1e-{{version}}",
+      "source_urls": [
+        "https://github.com/xiph/rav1e/archive/refs/tags/v{{version}}.tar.gz"
+      ],
+      "license_files": ["LICENSE", "PATENTS"],
+      "skip_marker": "skip-rav1e"
+    },
+    {
+      "name": "snappy",
+      "homepage": "https://github.com/google/snappy",
+      "license_expression": "BSD-3-Clause",
+      "version_key": "snappy",
+      "source_glob": "source/snappy/snappy-{{version}}",
+      "source_urls": [
+        "https://github.com/google/snappy/archive/refs/tags/{{version}}.tar.gz"
+      ],
+      "license_files": ["COPYING"],
+      "skip_marker": "skip-snappy"
+    },
+    {
+      "name": "srt",
+      "homepage": "https://github.com/Haivision/srt",
+      "license_expression": "MPL-2.0",
+      "version_key": "srt",
+      "source_glob": "source/srt/srt-{{version}}",
+      "source_urls": [
+        "https://github.com/Haivision/srt/archive/refs/tags/v{{version}}.tar.gz"
+      ],
+      "license_files": ["LICENSE"],
+      "skip_marker": "skip-srt"
+    },
+    {
+      "name": "svt-av1",
+      "homepage": "https://gitlab.com/AOMediaCodec/SVT-AV1",
+      "license_expression": "BSD-3-Clause-Clear",
+      "version_key": "svt-av1",
+      "source_glob": "source/svt-av1/SVT-AV1-v{{version}}",
+      "source_urls": [
+        "https://gitlab.com/AOMediaCodec/SVT-AV1/-/archive/v{{version}}/SVT-AV1-v{{version}}.tar.gz"
+      ],
+      "license_files": ["LICENSE.md", "PATENTS.md"],
+      "skip_marker": "skip-svt-av1"
+    },
+    {
+      "name": "libtheora",
+      "homepage": "https://www.theora.org/",
+      "license_expression": "BSD-3-Clause",
+      "version_key": "libtheora",
+      "source_glob": "source/libtheora/libtheora-{{version}}",
+      "source_urls": [
+        "http://downloads.xiph.org/releases/theora/libtheora-{{version}}.tar.bz2"
+      ],
+      "license_files": ["COPYING"],
+      "skip_marker": "skip-libtheora"
+    },
+    {
+      "name": "libvmaf",
+      "homepage": "https://github.com/Netflix/vmaf",
+      "license_expression": "BSD-2-Clause-Patent",
+      "version_key": "libvmaf",
+      "source_glob": "source/libvmaf/vmaf-{{version}}",
+      "source_urls": [
+        "https://github.com/Netflix/vmaf/archive/refs/tags/v{{version}}.tar.gz"
+      ],
+      "license_files": ["LICENSE"],
+      "skip_marker": "skip-libvmaf"
+    },
+    {
+      "name": "libvorbis",
+      "homepage": "https://xiph.org/vorbis/",
+      "license_expression": "BSD-3-Clause",
+      "version_key": "libvorbis",
+      "source_glob": "source/libvorbis/libvorbis-{{version}}",
+      "source_urls": [
+        "https://ftp.osuosl.org/pub/xiph/releases/vorbis/libvorbis-{{version}}.tar.gz"
+      ],
+      "license_files": ["COPYING"],
+      "skip_marker": "skip-libvorbis"
+    },
+    {
+      "name": "libvpx",
+      "homepage": "https://github.com/webmproject/libvpx",
+      "license_expression": "BSD-3-Clause",
+      "version_key": "vpx",
+      "source_glob": "source/vpx/libvpx-{{version}}",
+      "source_urls": [
+        "https://github.com/webmproject/libvpx/archive/v{{version}}.tar.gz"
+      ],
+      "license_files": ["LICENSE", "PATENTS"],
+      "skip_marker": "skip-vpx"
+    },
+    {
+      "name": "vvenc",
+      "homepage": "https://github.com/fraunhoferhhi/vvenc",
+      "license_expression": "BSD-3-Clause-Clear",
+      "version_key": "vvenc",
+      "source_glob": "source/vvenc/vvenc-{{version}}",
+      "source_urls": [
+        "https://github.com/fraunhoferhhi/vvenc/archive/refs/tags/v{{version}}.tar.gz"
+      ],
+      "license_files": ["LICENSE.txt"],
+      "skip_marker": "skip-vvenc"
+    },
+    {
+      "name": "libwebp",
+      "homepage": "https://github.com/webmproject/libwebp",
+      "license_expression": "BSD-3-Clause",
+      "version_key": "libwebp",
+      "source_glob": "source/libwebp/libwebp-{{version}}",
+      "source_urls": [
+        "https://github.com/webmproject/libwebp/archive/refs/tags/v{{version}}.tar.gz"
+      ],
+      "license_files": ["COPYING"],
+      "skip_marker": "skip-libwebp"
+    },
+    {
+      "name": "x264",
+      "homepage": "https://code.videolan.org/videolan/x264",
+      "license_expression": "GPL-2.0-or-later",
+      "version": "master",
+      "source_glob": "source/x264/x264-master",
+      "source_urls": [
+        "https://code.videolan.org/videolan/x264/-/archive/master/x264-master.tar.gz"
+      ],
+      "license_files": ["COPYING"],
+      "skip_marker": "skip-x264"
+    },
+    {
+      "name": "x265",
+      "homepage": "https://bitbucket.org/multicoreware/x265_git",
+      "license_expression": "GPL-2.0-or-later",
+      "version_key": "x265",
+      "source_glob": "source/x265/x265",
+      "source_urls": [
+        "https://bitbucket.org/multicoreware/x265_git/get/{{version}}.tar.gz"
+      ],
+      "license_files": ["COPYING"],
+      "skip_marker": "skip-x265"
+    },
+    {
+      "name": "libxml2",
+      "homepage": "https://gitlab.gnome.org/GNOME/libxml2",
+      "license_expression": "MIT",
+      "version_key": "libxml2",
+      "source_glob": "source/libxml2/libxml2-{{version}}",
+      "source_urls": [
+        "https://download.gnome.org/sources/libxml2/{{version_major_minor}}/libxml2-{{version}}.tar.xz"
+      ],
+      "license_files": ["Copyright"]
+    },
+    {
+      "name": "zimg",
+      "homepage": "https://github.com/sekrit-twc/zimg",
+      "license_expression": "WTFPL",
+      "version_key": "zimg",
+      "source_glob": "source/zimg/zimg-release-{{version}}",
+      "source_urls": [
+        "https://github.com/sekrit-twc/zimg/archive/refs/tags/release-{{version}}.tar.gz"
+      ],
+      "license_files": ["COPYING"],
+      "skip_marker": "skip-zimg"
+    },
+    {
+      "name": "zlib",
+      "homepage": "https://www.zlib.net/",
+      "license_expression": "Zlib",
+      "version_key": "zlib",
+      "source_glob": "source/zlib/zlib-{{version}}",
+      "source_urls": [
+        "https://www.zlib.net/fossils/zlib-{{version}}.tar.gz"
+      ],
+      "license_files": ["LICENSE"]
+    },
+    {
+      "name": "zvbi",
+      "homepage": "https://sourceforge.net/projects/zapping/",
+      "license_expression": "GPL-2.0-or-later AND LGPL-2.1-or-later",
+      "version_key": "zvbi",
+      "source_glob": "source/zvbi/zvbi-{{version}}",
+      "source_urls": [
+        "https://sourceforge.net/projects/zapping/files/zvbi/{{version}}/zvbi-{{version}}.tar.bz2/download"
+      ],
+      "license_files": ["COPYING", "COPYING.LIB"],
+      "skip_marker": "skip-zvbi"
+    }
+  ]
+}

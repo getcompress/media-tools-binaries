@@ -1,0 +1,364 @@
+name: 'resvg-publish'
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to clone'
+        required: true
+        type: string
+
+jobs:
+  build:
+    name: build-${{ matrix.platform }}-${{ matrix.artifact_arch }}
+    runs-on: ${{ matrix.runner }}
+    permissions: { contents: read }
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            artifact_arch: arm64
+            arch: arm64
+            rust_target: aarch64-apple-darwin
+            macos_min: '11.0'
+            runner: macos-latest
+          - platform: macos
+            artifact_arch: x64
+            arch: x86_64
+            rust_target: x86_64-apple-darwin
+            macos_min: '10.15'
+            runner: macos-15-intel
+          - platform: linux
+            artifact_arch: x64
+            arch: x86_64
+            rust_target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - platform: linux
+            artifact_arch: arm64
+            arch: aarch64
+            rust_target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+          - platform: windows
+            artifact_arch: x64
+            arch: x86_64
+            rust_target: x86_64-pc-windows-msvc
+            runner: windows-latest
+          - platform: windows
+            artifact_arch: arm64
+            arch: aarch64
+            rust_target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+
+    env:
+      MACOS_MIN: ${{ matrix.macos_min }}
+      RESVG_ARTIFACT_ARCH: ${{ matrix.artifact_arch }}
+      RESVG_BUILD_ARCH: ${{ matrix.arch }}
+      RESVG_PLATFORM: ${{ matrix.platform }}
+      RESVG_REF: ${{ github.event.inputs.tag }}
+      RESVG_RUST_TARGET: ${{ matrix.rust_target }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/checkout@v6
+        with:
+          repository: 'linebender/resvg'
+          ref: ${{ github.event.inputs.tag }}
+          path: resvg
+
+      - name: Install license generator
+        shell: bash
+        run: cargo install cargo-about --version 0.8.4 --locked
+
+      - name: Build resvg (macOS)
+        if: matrix.platform == 'macos'
+        working-directory: resvg
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DIST_DIR="${{ github.workspace }}/dist/resvg-${RESVG_REF}-${RESVG_PLATFORM}-${RESVG_ARTIFACT_ARCH}"
+
+          rm -rf "$DIST_DIR"
+          mkdir -p "$DIST_DIR"
+
+          rustup target add "$RESVG_RUST_TARGET"
+
+          export MACOSX_DEPLOYMENT_TARGET="$MACOS_MIN"
+          export RUSTFLAGS="-C link-arg=-mmacosx-version-min=${MACOS_MIN}"
+
+          cargo build --release --locked --target "$RESVG_RUST_TARGET" --package resvg --bin resvg
+
+          cp "target/${RESVG_RUST_TARGET}/release/resvg" "$DIST_DIR/resvg"
+          chmod +x "$DIST_DIR/resvg"
+          strip -x "$DIST_DIR/resvg" || true
+
+          echo "==> Verifying binary architecture"
+          file "$DIST_DIR/resvg"
+          if ! file "$DIST_DIR/resvg" | grep -q "$RESVG_BUILD_ARCH"; then
+            echo "ERROR: resvg binary architecture does not match ${RESVG_BUILD_ARCH}"
+            exit 1
+          fi
+
+          echo "==> Verifying linked dylibs"
+          otool -L "$DIST_DIR/resvg"
+          if otool -L "$DIST_DIR/resvg" | grep -E '/opt/homebrew|/usr/local/(Cellar|opt)' >/dev/null; then
+            echo "ERROR: Homebrew runtime dependency leaked into final resvg binary"
+            exit 1
+          fi
+
+          echo "==> Verifying macOS deployment target"
+          DEPLOYMENT_INFO="$(vtool -show-build "$DIST_DIR/resvg" 2>/dev/null || otool -l "$DIST_DIR/resvg")"
+          echo "$DEPLOYMENT_INFO"
+          if [ "$RESVG_BUILD_ARCH" = "x86_64" ] && ! echo "$DEPLOYMENT_INFO" | grep -Eq 'minos 10\.15|version 10\.15'; then
+            echo "ERROR: expected x64 resvg binary to target macOS 10.15"
+            exit 1
+          fi
+
+      - name: Build resvg (Linux)
+        if: matrix.platform == 'linux'
+        working-directory: resvg
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DIST_DIR="${{ github.workspace }}/dist/resvg-${RESVG_REF}-${RESVG_PLATFORM}-${RESVG_ARTIFACT_ARCH}"
+
+          rm -rf "$DIST_DIR"
+          mkdir -p "$DIST_DIR"
+
+          rustup target add "$RESVG_RUST_TARGET"
+
+          cargo build --release --locked --target "$RESVG_RUST_TARGET" --package resvg --bin resvg
+
+          cp "target/${RESVG_RUST_TARGET}/release/resvg" "$DIST_DIR/resvg"
+          chmod +x "$DIST_DIR/resvg"
+          strip "$DIST_DIR/resvg" || true
+
+          echo "==> Verifying binary"
+          file "$DIST_DIR/resvg"
+          if [[ "${RESVG_BUILD_ARCH}" == "x86_64" ]] && ! file "$DIST_DIR/resvg" | grep -q 'x86-64'; then
+            echo "ERROR: expected x86_64 binary"
+            exit 1
+          fi
+          if [[ "${RESVG_BUILD_ARCH}" == "aarch64" ]] && ! file "$DIST_DIR/resvg" | grep -qE 'ARM aarch64|aarch64'; then
+            echo "ERROR: expected aarch64 binary"
+            exit 1
+          fi
+
+          echo "==> Verifying linked libraries"
+          ldd "$DIST_DIR/resvg"
+          if ldd "$DIST_DIR/resvg" | grep -E "${GITHUB_WORKSPACE}|/opt/hostedtoolcache|/home/linuxbrew|not found" >/dev/null; then
+            echo "ERROR: Linux binary leaked a runner-specific dependency"
+            exit 1
+          fi
+
+      - name: Build resvg (Windows)
+        if: matrix.platform == 'windows'
+        working-directory: resvg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $DistDir = Join-Path $Env:GITHUB_WORKSPACE "dist\resvg-$Env:RESVG_REF-$Env:RESVG_PLATFORM-$Env:RESVG_ARTIFACT_ARCH"
+
+          if (Test-Path $DistDir) { Remove-Item -Recurse -Force $DistDir }
+          New-Item -ItemType Directory -Path $DistDir | Out-Null
+
+          rustup target add $Env:RESVG_RUST_TARGET
+
+          $Env:RUSTFLAGS = '-C target-feature=+crt-static'
+          cargo build --release --locked --target $Env:RESVG_RUST_TARGET --package resvg --bin resvg
+
+          Copy-Item "target\$Env:RESVG_RUST_TARGET\release\resvg.exe" "$DistDir\resvg.exe"
+
+          Write-Host "==> Verifying binary"
+          & "$DistDir\resvg.exe" --version
+
+      - name: Assemble license notices (macOS/Linux)
+        if: matrix.platform != 'windows'
+        working-directory: resvg
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DIST_DIR="${{ github.workspace }}/dist/resvg-${RESVG_REF}-${RESVG_PLATFORM}-${RESVG_ARTIFACT_ARCH}"
+          LICENSES_MD="$DIST_DIR/LICENSES-ALL.md"
+          ABOUT_CONFIG="$RUNNER_TEMP/resvg-about.toml"
+          ABOUT_TEMPLATE="$RUNNER_TEMP/resvg-licenses.hbs"
+
+          cat > "$ABOUT_CONFIG" <<'EOF'
+          accepted = [
+              "Apache-2.0",
+              "MIT",
+              "BSD-2-Clause",
+              "BSD-3-Clause",
+              "ISC",
+              "Zlib",
+              "Unicode-3.0",
+              "Unicode-DFS-2016",
+              "CC0-1.0",
+              "BSL-1.0",
+          ]
+
+          targets = [
+              "aarch64-apple-darwin",
+              "x86_64-apple-darwin",
+              "x86_64-unknown-linux-gnu",
+              "aarch64-unknown-linux-gnu",
+              "x86_64-pc-windows-msvc",
+              "aarch64-pc-windows-msvc",
+          ]
+
+          ignore-dev-dependencies = true
+          EOF
+
+          cat > "$ABOUT_TEMPLATE" <<'EOF'
+          {{#each licenses}}
+          ### License: {{name}}
+          #### Used by:
+          {{#each used_by}}
+          - [{{crate.name}} {{crate.version}}]({{#if crate.repository}}{{crate.repository}}{{else}}https://crates.io/crates/{{crate.name}}{{/if}})
+          {{/each}}
+          #### License text
+          ```
+          {{text}}
+          ```
+
+          {{/each}}
+          EOF
+
+          cargo about generate \
+            --config "$ABOUT_CONFIG" \
+            --manifest-path Cargo.toml \
+            --workspace \
+            --locked \
+            --fail \
+            --output-file "$LICENSES_MD" \
+            "$ABOUT_TEMPLATE"
+
+          test -s "$LICENSES_MD"
+
+      - name: Assemble license notices (Windows)
+        if: matrix.platform == 'windows'
+        working-directory: resvg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $DistDir = Join-Path $Env:GITHUB_WORKSPACE "dist\resvg-$Env:RESVG_REF-$Env:RESVG_PLATFORM-$Env:RESVG_ARTIFACT_ARCH"
+          $LicensesMd = Join-Path $DistDir "LICENSES-ALL.md"
+          $AboutConfig = Join-Path $Env:RUNNER_TEMP "resvg-about.toml"
+          $AboutTemplate = Join-Path $Env:RUNNER_TEMP "resvg-licenses.hbs"
+
+          @'
+          accepted = [
+              "Apache-2.0",
+              "MIT",
+              "BSD-2-Clause",
+              "BSD-3-Clause",
+              "ISC",
+              "Zlib",
+              "Unicode-3.0",
+              "Unicode-DFS-2016",
+              "CC0-1.0",
+              "BSL-1.0",
+          ]
+
+          targets = [
+              "aarch64-apple-darwin",
+              "x86_64-apple-darwin",
+              "x86_64-unknown-linux-gnu",
+              "aarch64-unknown-linux-gnu",
+              "x86_64-pc-windows-msvc",
+              "aarch64-pc-windows-msvc",
+          ]
+
+          ignore-dev-dependencies = true
+          '@ | Set-Content -Path $AboutConfig -Encoding UTF8
+
+          @'
+          {{#each licenses}}
+          ### License: {{name}}
+          #### Used by:
+          {{#each used_by}}
+          - [{{crate.name}} {{crate.version}}]({{#if crate.repository}}{{crate.repository}}{{else}}https://crates.io/crates/{{crate.name}}{{/if}})
+          {{/each}}
+          #### License text
+          ```
+          {{text}}
+          ```
+
+          {{/each}}
+          '@ | Set-Content -Path $AboutTemplate -Encoding UTF8
+
+          cargo about generate `
+            --config $AboutConfig `
+            --manifest-path Cargo.toml `
+            --workspace `
+            --locked `
+            --fail `
+            --output-file $LicensesMd `
+            $AboutTemplate
+
+          if (-not (Test-Path $LicensesMd) -or (Get-Item $LicensesMd).Length -eq 0) {
+            throw "LICENSES-ALL.md is empty or missing"
+          }
+
+      - name: Package artifact (macOS/Linux)
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: |
+          zip -X -j \
+            "resvg-${{ github.event.inputs.tag }}-${{ matrix.platform }}-${{ matrix.artifact_arch }}.zip" \
+            "dist/resvg-${{ github.event.inputs.tag }}-${{ matrix.platform }}-${{ matrix.artifact_arch }}/resvg" \
+            "dist/resvg-${{ github.event.inputs.tag }}-${{ matrix.platform }}-${{ matrix.artifact_arch }}/LICENSES-ALL.md"
+
+      - name: Package artifact (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $Tag = $Env:RESVG_REF
+          $Platform = $Env:RESVG_PLATFORM
+          $Arch = $Env:RESVG_ARTIFACT_ARCH
+          $DistDir = Join-Path $Env:GITHUB_WORKSPACE "dist\resvg-$Tag-$Platform-$Arch"
+          $ZipPath = Join-Path $Env:GITHUB_WORKSPACE "resvg-$Tag-$Platform-$Arch.zip"
+
+          Add-Type -Assembly System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::Open($ZipPath, [System.IO.Compression.ZipArchiveMode]::Create)
+          [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, "$DistDir\resvg.exe", "resvg.exe")
+          [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, "$DistDir\LICENSES-ALL.md", "LICENSES-ALL.md")
+          $zip.Dispose()
+
+      - name: Upload package
+        uses: actions/upload-artifact@v7
+        with:
+          path: resvg-${{ github.event.inputs.tag }}-${{ matrix.platform }}-${{ matrix.artifact_arch }}.zip
+          if-no-files-found: error
+          archive: false
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v8
+        with:
+          pattern: resvg-${{ github.event.inputs.tag }}-*.zip
+          path: release
+          merge-multiple: true
+          skip-decompress: true
+
+      - uses: ncipollo/release-action@v1.21.0
+        with:
+          tag: resvg-${{ github.event.inputs.tag }}
+          name: resvg-${{ github.event.inputs.tag }}
+          artifacts: 'release/*.zip'
+          allowUpdates: true
+          artifactErrorsFailBuild: true
