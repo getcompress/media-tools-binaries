@@ -127,7 +127,7 @@ jobs:
 
       - name: Verify packaging scripts
         shell: bash
-        run: node ffmpeg-macos-linux/scripts/generate-licenses.test.mjs
+        run: node ffmpeg-build-scripts/scripts/generate-licenses.test.mjs
 
       - uses: actions/setup-python@v6
         with:
@@ -252,7 +252,7 @@ jobs:
             export ALLOW_PRUNE_HOMEBREW_DYLIBS=YES
           fi
 
-          if ! "${{ github.workspace }}/ffmpeg-macos-linux/build.sh" \
+          if ! "${{ github.workspace }}/ffmpeg-build-scripts/build.sh" \
             -SKIP_BUNDLE=YES \
             -SKIP_DECKLINK=YES \
             -SKIP_LIBBLURAY=YES \
@@ -289,7 +289,7 @@ jobs:
           mkdir -p "$BUILD_ROOT"
           cd "$BUILD_ROOT"
 
-          if ! "${WS}/ffmpeg-macos-linux/build.sh" \
+          if ! "${WS}/ffmpeg-build-scripts/build.sh" \
             -SKIP_BUNDLE=YES \
             -SKIP_DECKLINK=YES \
             -SKIP_LIBBLURAY=YES \
@@ -336,7 +336,7 @@ jobs:
 
           test -x "$FFMPEG_BIN"
 
-          node "${{ github.workspace }}/ffmpeg-macos-linux/scripts/generate-licenses.mjs" \
+          node "${{ github.workspace }}/ffmpeg-build-scripts/scripts/generate-licenses.mjs" \
             "$BUILD_ROOT" \
             "$LICENSES_MD" \
             "$SOURCES_MD" \
@@ -430,7 +430,7 @@ jobs:
 
           test -x "$FFMPEG_BIN"
 
-          node "${WS}/ffmpeg-macos-linux/scripts/generate-licenses.mjs" \
+          node "${WS}/ffmpeg-build-scripts/scripts/generate-licenses.mjs" \
             "$BUILD_ROOT" \
             "$LICENSES_MD" \
             "$SOURCES_MD" \

@@ -8,7 +8,7 @@ license texts and notices that are included for attribution and compliance.
 FFmpeg build script provenance
 ------------------------------
 
-The `ffmpeg-macos-linux/` subtree is derived from Martin Riedl's FFmpeg build
+The `ffmpeg-build-scripts/` subtree is derived from Martin Riedl's FFmpeg build
 script project:
 
 - Upstream repository: https://git.martin-riedl.de/ffmpeg/build-script.git
@@ -23,7 +23,7 @@ Preserved upstream Apache notice
 Because the subtree originated from upstream Apache-2.0 material, this
 repository preserves the upstream Apache-2.0 license text in:
 
-- `ffmpeg-macos-linux/LICENSE`
+- `ffmpeg-build-scripts/LICENSE`
 
 That preserved Apache-2.0 text and the upstream attribution are retained for
 upstream-origin material and compliance. They do not change the fact that this
