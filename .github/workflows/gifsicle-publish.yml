@@ -185,13 +185,21 @@ jobs:
           ROOT="$(pwd)"
           DIST_DIR="${WS}/dist/gifsicle-${GIFSICLE_REF}-${GIFSICLE_PLATFORM}-${GIFSICLE_ARTIFACT_ARCH}"
           INSTALL_DIR="$ROOT/output"
+          GIFSICLE_LINK_MAP="$DIST_DIR/gifsicle-link.map"
 
           rm -rf "$DIST_DIR" "$INSTALL_DIR"
           mkdir -p "$DIST_DIR" "$INSTALL_DIR"
 
           ./bootstrap.sh
 
+          if [[ "${MSYSTEM}" == "CLANGARM64" ]]; then
+            export CC=clang
+            export CXX=clang++
+          fi
+
           ./configure \
+            LDFLAGS="-static -static-libgcc -static-libstdc++ -Wl,-Map,$GIFSICLE_LINK_MAP" \
+            LIBS="-Wl,-Bstatic -lwinpthread -Wl,-Bdynamic" \
             --disable-dependency-tracking \
             --prefix="$INSTALL_DIR" \
             --disable-gifview --disable-gifdiff
@@ -205,7 +213,47 @@ jobs:
           objdump -f "$DIST_DIR/gifsicle.exe" | head -5
 
           echo "==> Verifying linked DLLs"
-          objdump -p "$DIST_DIR/gifsicle.exe" | grep 'DLL Name'
+          DLLS="$(objdump -p "$DIST_DIR/gifsicle.exe" | awk -F': ' '/DLL Name:/ { print $2 }')"
+          printf '%s\n' "$DLLS"
+
+          echo "==> Verifying toolchain runtime linkage"
+          if [[ "${MSYSTEM}" == "CLANGARM64" ]]; then
+            command -v clang
+            command -v clang++ || true
+            TOOLCHAIN_PREFIX="$(dirname "$(dirname "$(command -v clang)")")"
+          else
+            command -v gcc
+            command -v g++ || true
+            TOOLCHAIN_PREFIX="$(dirname "$(dirname "$(command -v gcc)")")"
+          fi
+          find "$TOOLCHAIN_PREFIX" -name 'libwinpthread.a' -o -name 'libwinpthread.dll.a' | sort
+
+          while IFS= read -r dll; do
+            [[ -n "$dll" ]] || continue
+            dll_lower="$(printf '%s' "$dll" | tr '[:upper:]' '[:lower:]')"
+
+            case "$dll_lower" in
+              libwinpthread-1.dll|libgcc_s_*.dll|libstdc++-6.dll|libclang_rt.*.dll)
+                echo "ERROR: Windows gifsicle binary depends on toolchain runtime DLL: $dll"
+                if [[ -f "$GIFSICLE_LINK_MAP" ]]; then
+                  echo "==> gifsicle link map entries mentioning winpthread/pthread/libgcc/libstdc++"
+                  grep -iE 'winpthread|pthread|libgcc|libstdc\+\+' "$GIFSICLE_LINK_MAP" || true
+                else
+                  echo "==> gifsicle link map not found at $GIFSICLE_LINK_MAP"
+                fi
+                exit 1
+                ;;
+            esac
+
+            case "$dll_lower" in
+              api-ms-win-*.dll|ext-ms-*.dll|advapi32.dll|bcrypt.dll|bcryptprimitives.dll|cfgmgr32.dll|combase.dll|comdlg32.dll|crypt32.dll|dbghelp.dll|dnsapi.dll|gdi32.dll|iphlpapi.dll|kernel32.dll|kernelbase.dll|msvcrt.dll|normaliz.dll|ntdll.dll|ole32.dll|oleaut32.dll|powrprof.dll|psapi.dll|rpcrt4.dll|secur32.dll|setupapi.dll|shell32.dll|shlwapi.dll|ucrtbase.dll|user32.dll|userenv.dll|version.dll|winmm.dll|ws2_32.dll|wsock32.dll|avicap32.dll)
+                ;;
+              *)
+                echo "ERROR: Windows gifsicle binary has a non-system DLL dependency: $dll"
+                exit 1
+                ;;
+            esac
+          done <<<"$DLLS"
 
       - name: Assemble license notices and source bundle (macOS/Linux)
         if: matrix.platform != 'windows'
