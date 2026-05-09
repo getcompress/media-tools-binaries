@@ -56,7 +56,26 @@ else
 fi
 
 # prepare build
-./configure --prefix="$TOOL_DIR" --enable-shared=no --without-python
+LIBXML2_CONFIGURE_FLAGS="--prefix=$TOOL_DIR --enable-shared=no --without-python"
+if isMsys; then
+    appendFlag CPPFLAGS "-I${TOOL_DIR}/include"
+    appendFlag LDFLAGS "-L${TOOL_DIR}/lib"
+
+    LIBXML2_CONFIGURE_HELP=$(./configure --help)
+    checkStatus $? "read libxml2 configure help failed"
+    if printf '%s\n' "$LIBXML2_CONFIGURE_HELP" | grep -q -- '--with-iconv-prefix'; then
+        LIBXML2_CONFIGURE_FLAGS="$LIBXML2_CONFIGURE_FLAGS --with-iconv-prefix=$TOOL_DIR"
+    elif printf '%s\n' "$LIBXML2_CONFIGURE_HELP" | grep -Eq -- '--with-iconv.*(DIR|dir)'; then
+        LIBXML2_CONFIGURE_FLAGS="$LIBXML2_CONFIGURE_FLAGS --with-iconv=$TOOL_DIR"
+    elif printf '%s\n' "$LIBXML2_CONFIGURE_HELP" | grep -q -- '--with-iconv'; then
+        LIBXML2_CONFIGURE_FLAGS="$LIBXML2_CONFIGURE_FLAGS --with-iconv"
+    else
+        echo "libxml2 configure does not expose an iconv option"
+        exit 1
+    fi
+fi
+
+./configure $LIBXML2_CONFIGURE_FLAGS
 checkStatus $? "configuration failed"
 
 # build

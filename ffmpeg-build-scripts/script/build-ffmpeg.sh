@@ -69,6 +69,7 @@ appendFlag CPPFLAGS "-I${TOOL_DIR}/include"
 
 FFMPEG_CONFIGURE_FLAGS="--disable-autodetect --enable-zlib --disable-lzma --disable-libxcb --disable-xlib --disable-sdl2"
 FFMPEG_LDEXEFLAGS=""
+FFMPEG_EXTRA_LIBS=""
 FFMPEG_TOOLCHAIN_FLAGS=""
 
 if isMsys; then
@@ -80,7 +81,9 @@ if isMsys; then
     if [ "${MSYSTEM:-}" = "CLANGARM64" ]; then
         FFMPEG_CC="$(command -v clang)"
         FFMPEG_CXX="$(command -v clang++)"
-        FFMPEG_LD="$FFMPEG_CXX"
+        # Link with the C driver and provide static C++ runtimes explicitly.
+        # clang++ can append its default C++ runtime after our flags.
+        FFMPEG_LD="$FFMPEG_CC"
         FFMPEG_AR="$(command -v llvm-ar 2> /dev/null || command -v ar)"
         FFMPEG_RANLIB="$(command -v llvm-ranlib 2> /dev/null || command -v ranlib)"
         FFMPEG_NM="$(command -v llvm-nm 2> /dev/null || command -v nm)"
@@ -89,7 +92,10 @@ if isMsys; then
     else
         FFMPEG_CC="$(command -v gcc)"
         FFMPEG_CXX="$(command -v g++)"
-        FFMPEG_LD="$FFMPEG_CXX"
+        # Link with the C driver and provide static C++/unwind runtimes
+        # explicitly. g++ can append default runtime import libraries after
+        # our flags, which reintroduces libstdc++-6.dll/libgcc_s_*.dll.
+        FFMPEG_LD="$FFMPEG_CC"
         FFMPEG_AR="$(command -v ar)"
         FFMPEG_RANLIB="$(command -v ranlib)"
         FFMPEG_NM="$(command -v nm)"
@@ -102,16 +108,12 @@ if isMsys; then
         FFMPEG_TOOLCHAIN_FLAGS="$FFMPEG_TOOLCHAIN_FLAGS --windres=$FFMPEG_WINDRES"
     fi
 
-    # -static-libgcc pulls in libgcc_eh.a; rav1e's Rust windows-gnu runtime also
-    # pulls in libgcc_s.a (DLL import stub) which re-exports the same symbols.
-    # GCC 15+ treats this as a fatal multiple-definition error.
-    # --exclude-libs,libgcc_s.a tells ld to ignore libgcc_s.a's symbol exports,
-    # so the static libgcc_eh.a implementations win without a conflict.
-    # -static-libgcc pulls in libgcc_eh.a; rav1e's Rust windows-gnu runtime also
-    # references libgcc_s (DLL import stub), causing duplicate _Unwind_* symbols.
-    # GCC 15+ treats duplicate symbols as a fatal error; --allow-multiple-definition
-    # suppresses it (both definitions are identical, static one wins for the exe).
-    FFMPEG_LDEXEFLAGS="-static -static-libgcc -static-libstdc++ -Wl,--allow-multiple-definition -Wl,-Map,$OUT_DIR/ffmpeg-link.map"
+    # Pick Windows toolchain runtimes explicitly. Without the -Bstatic bracket,
+    # dependency metadata or the C++ link driver can choose import libraries
+    # and leave ffmpeg.exe dependent on clean-install-missing DLLs.
+    FFMPEG_EXTRA_LIBS=$(windowsStaticRuntimeExtraLibs)
+    checkStatus $? "resolve Windows static runtime extra libs failed"
+    FFMPEG_LDEXEFLAGS="$(windowsStaticRuntimeLdFlags) -Wl,--allow-multiple-definition -Wl,-Map,$OUT_DIR/ffmpeg-link.map"
 else
     FFMPEG_CONFIGURE_FLAGS="$FFMPEG_CONFIGURE_FLAGS --enable-iconv"
 fi
@@ -124,6 +126,7 @@ fi
 if [ -n "$FFMPEG_LDEXEFLAGS" ]; then
     ./configure --prefix="$OUT_DIR" --pkg-config="$TOOL_DIR/bin/pkg-config" --pkg-config-flags="--static" --extra-version="$EXTRA_VERSION" \
         --extra-ldexeflags="$FFMPEG_LDEXEFLAGS" \
+        --extra-libs="$FFMPEG_EXTRA_LIBS" \
         $FFMPEG_TOOLCHAIN_FLAGS \
         $FFMPEG_CONFIGURE_FLAGS \
         --enable-gray --enable-libxml2 $FFMPEG_LIB_FLAGS

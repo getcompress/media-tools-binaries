@@ -47,6 +47,19 @@
       "skip_marker": "skip-libbluray"
     },
     {
+      "name": "libiconv",
+      "homepage": "https://www.gnu.org/software/libiconv/",
+      "license_expression": "LGPL-2.1-or-later",
+      "version_key": "libiconv",
+      "source_glob": "source/libiconv/libiconv-{{version}}",
+      "source_urls": [
+        "https://ftp.gnu.org/pub/gnu/libiconv/libiconv-{{version}}.tar.gz",
+        "https://mirror.msys2.org/mingw/sources/mingw-w64-libiconv-{{package_version}}.src.tar.zst"
+      ],
+      "license_files": ["COPYING.LIB", "README", "libcharset/COPYING.LIB"],
+      "skip_marker": "skip-libiconv"
+    },
+    {
       "name": "dav1d",
       "homepage": "https://code.videolan.org/videolan/dav1d",
       "license_expression": "BSD-2-Clause",

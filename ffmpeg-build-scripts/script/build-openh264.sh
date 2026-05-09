@@ -86,7 +86,7 @@ Name: openh264
 Description: OpenH264 codec library
 Version: ${VERSION}
 Libs: -L\${libdir} -lopenh264
-Libs.private: -lc++ -lc++abi -lunwind
+Libs.private: -Wl,-Bstatic -lc++ -lc++abi -lunwind -Wl,-Bdynamic
 Cflags: -I\${includedir}
 PCEOF
     checkStatus $? "create openh264.pc failed"

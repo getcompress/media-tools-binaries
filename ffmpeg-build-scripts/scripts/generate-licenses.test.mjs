@@ -32,7 +32,8 @@ function normalizeText(text) {
 function templateValues(version) {
   return {
     version,
-    version_major_minor: version.split('.').slice(0, 2).join('.')
+    version_major_minor: version.split('.').slice(0, 2).join('.'),
+    package_version: `${version}-1`
   }
 }
 
@@ -54,6 +55,24 @@ async function readDependencyVersion(dependency) {
 
   const versionKey = dependency.version_key ?? dependency.name
   return normalizeText(await fs.readFile(path.join(versionDir, versionKey), 'utf8'))
+}
+
+async function readBuildFixtureVersion(buildRoot, dependency) {
+  if (dependency.version) {
+    return normalizeText(String(dependency.version))
+  }
+
+  const versionKey = dependency.version_key ?? dependency.name
+  const overridePath = path.join(buildRoot, 'log', versionKey, 'version')
+  try {
+    return normalizeText(await fs.readFile(overridePath, 'utf8'))
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      throw error
+    }
+  }
+
+  return readDependencyVersion(dependency)
 }
 
 async function assertManifestIsValid() {
@@ -150,7 +169,7 @@ async function writeFileWithParents(filePath, contents) {
 }
 
 async function createSourceFixture(buildRoot, dependency) {
-  const version = await readDependencyVersion(dependency)
+  const version = await readBuildFixtureVersion(buildRoot, dependency)
   const sourceGlob = renderTemplate(dependency.source_glob, templateValues(version))
   const sourceDir = path.join(buildRoot, sourceGlob.replace(/\*/g, 'fixture'))
   await fs.mkdir(sourceDir, { recursive: true })
@@ -163,11 +182,18 @@ async function createSourceFixture(buildRoot, dependency) {
   }
 }
 
-async function createBuildFixture(activeOptionalDependencies = []) {
+async function createBuildFixture(activeOptionalDependencies = [], buildLocalMetadata = {}) {
   const buildRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'generate-licenses-test-'))
   const activeOptionalDependencyNames = new Set(activeOptionalDependencies)
 
   await fs.mkdir(path.join(buildRoot, 'log'), { recursive: true })
+  for (const [versionKey, values] of Object.entries(buildLocalMetadata)) {
+    const metadataDir = path.join(buildRoot, 'log', versionKey)
+    await fs.mkdir(metadataDir, { recursive: true })
+    for (const [key, value] of Object.entries(values)) {
+      await fs.writeFile(path.join(metadataDir, key), `${value}\n`)
+    }
+  }
 
   for (const dependency of manifest.dependencies) {
     if (dependency.skip_marker) {
@@ -216,6 +242,23 @@ const x264Output = await runGenerator(x264BuildRoot)
 assert.match(x264Output.licenses, /#### Used by: x264 master https:\/\/code\.videolan\.org\/videolan\/x264/)
 assert.match(x264Output.sources, /### Source Code: x264 master/)
 await fs.rm(x264BuildRoot, { recursive: true, force: true })
+
+const libiconvBuildRoot = await createBuildFixture(['libiconv'], {
+  libiconv: {
+    version: '1.18',
+    package_version: '1.18-1',
+    package_name: 'mingw-w64-clang-aarch64-libiconv'
+  }
+})
+const libiconvOutput = await runGenerator(libiconvBuildRoot)
+assert.match(libiconvOutput.licenses, /#### Used by: libiconv 1\.18 https:\/\/www\.gnu\.org\/software\/libiconv\//)
+assert.match(libiconvOutput.licenses, /### License: LGPL-2\.1-or-later/)
+assert.match(libiconvOutput.licenses, /license text for libiconv COPYING\.LIB/)
+assert.doesNotMatch(libiconvOutput.licenses, /license text for libiconv COPYING\n/)
+assert.doesNotMatch(libiconvOutput.licenses, /### License: .*GPL-3\.0-or-later/)
+assert.match(libiconvOutput.sources, /### Source Code: libiconv 1\.18/)
+assert.match(libiconvOutput.sources, /mingw-w64-libiconv-1\.18-1\.src\.tar\.zst/)
+await fs.rm(libiconvBuildRoot, { recursive: true, force: true })
 
 for (const dependency of manifest.dependencies.filter((candidate) => candidate.skip_marker)) {
   const buildRoot = await createBuildFixture([dependency.name])

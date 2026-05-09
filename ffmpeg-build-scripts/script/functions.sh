@@ -63,6 +63,255 @@ isMsys(){
     [ "$(uname -o 2> /dev/null)" = "Msys" ]
 }
 
+windowsToolchainPrefix(){
+    if ! isMsys; then
+        return 1
+    fi
+
+    if [ -n "${MINGW_PREFIX:-}" ] && [ -d "$MINGW_PREFIX" ]; then
+        printf '%s\n' "$MINGW_PREFIX"
+        return
+    fi
+
+    TOOLCHAIN_CC=$(command -v gcc 2> /dev/null || command -v clang 2> /dev/null)
+    if [ -z "$TOOLCHAIN_CC" ]; then
+        return 1
+    fi
+
+    dirname "$(dirname "$TOOLCHAIN_CC")"
+}
+
+windowsArTool(){
+    command -v ar 2> /dev/null || command -v llvm-ar 2> /dev/null
+}
+
+windowsRanlibTool(){
+    command -v ranlib 2> /dev/null || command -v llvm-ranlib 2> /dev/null
+}
+
+printArchiveMembers(){
+    ARCHIVE=$1
+    AR_TOOL=$(windowsArTool)
+    if [ -z "$AR_TOOL" ] || [ ! -f "$ARCHIVE" ]; then
+        return
+    fi
+
+    echo "archive members: $ARCHIVE"
+    "$AR_TOOL" t "$ARCHIVE" | sed -n '1,20p'
+}
+
+copyStaticArchiveOverImportLib(){
+    SOURCE_ARCHIVE=$1
+    TARGET_ARCHIVE=$2
+
+    if [ ! -f "$SOURCE_ARCHIVE" ]; then
+        echo "missing static archive for neutralization: $SOURCE_ARCHIVE"
+        return 1
+    fi
+
+    echo "neutralize $TARGET_ARCHIVE <- $SOURCE_ARCHIVE"
+    rm -f "$TARGET_ARCHIVE"
+    checkStatus $? "remove runtime import library failed"
+    cp -f "$SOURCE_ARCHIVE" "$TARGET_ARCHIVE"
+    checkStatus $? "copy static archive over import library failed"
+    chmod a+r "$TARGET_ARCHIVE"
+    checkStatus $? "chmod neutralized import library failed"
+    printArchiveMembers "$TARGET_ARCHIVE"
+}
+
+copyStaticArchiveOverImportLibIfPresent(){
+    SOURCE_ARCHIVE=$1
+    TARGET_ARCHIVE=$2
+
+    if [ ! -f "$TARGET_ARCHIVE" ]; then
+        echo "skip neutralize $TARGET_ARCHIVE; target not present"
+        return
+    fi
+
+    copyStaticArchiveOverImportLib "$SOURCE_ARCHIVE" "$TARGET_ARCHIVE"
+}
+
+copyStaticArchiveOverImportLibsUnderPrefix(){
+    PREFIX=$1
+    SOURCE_NAME=$2
+    TARGET_NAME=$3
+    REQUIRED=$4
+    CANDIDATE_LIST=$(mktemp 2> /dev/null || mktemp -t ffmpeg-import-libs)
+    checkStatus $? "create import library candidate list failed"
+
+    find "$PREFIX" \( -type f -o -type l \) -name "$TARGET_NAME" -print > "$CANDIDATE_LIST"
+    checkStatus $? "collect import library candidates failed"
+
+    if [ ! -s "$CANDIDATE_LIST" ]; then
+        rm -f "$CANDIDATE_LIST"
+        checkStatus $? "remove import library candidate list failed"
+        if [ "$REQUIRED" = "required" ]; then
+            copyStaticArchiveOverImportLib "$PREFIX/lib/$SOURCE_NAME" "$PREFIX/lib/$TARGET_NAME"
+        else
+            echo "skip neutralize $TARGET_NAME; target not present under $PREFIX"
+        fi
+        return
+    fi
+
+    while IFS= read -r TARGET_ARCHIVE
+    do
+        SOURCE_ARCHIVE="$(dirname "$TARGET_ARCHIVE")/$SOURCE_NAME"
+        if [ ! -f "$SOURCE_ARCHIVE" ]; then
+            SOURCE_ARCHIVE="$PREFIX/lib/$SOURCE_NAME"
+        fi
+        copyStaticArchiveOverImportLib "$SOURCE_ARCHIVE" "$TARGET_ARCHIVE"
+    done < "$CANDIDATE_LIST"
+
+    rm -f "$CANDIDATE_LIST"
+    checkStatus $? "remove import library candidate list failed"
+}
+
+replaceLibgccSWithStaticArchive(){
+    PREFIX=$1
+
+    GCC_LIBGCC=$(gcc -print-libgcc-file-name)
+    checkStatus $? "locate libgcc.a failed"
+    GCC_LIB_DIR=$(dirname "$GCC_LIBGCC")
+    GCC_LIBGCC_EH="$GCC_LIB_DIR/libgcc_eh.a"
+    TARGET_ARCHIVE="$PREFIX/lib/libgcc_s.a"
+    CANDIDATE_LIST=$(mktemp 2> /dev/null || mktemp -t ffmpeg-libgcc-s)
+    checkStatus $? "create libgcc_s candidate list failed"
+    AR_TOOL=$(windowsArTool)
+    RANLIB_TOOL=$(windowsRanlibTool)
+
+    if [ -z "$AR_TOOL" ]; then
+        echo "ar is required to rebuild static libgcc_s.a"
+        return 1
+    fi
+    if [ -z "$RANLIB_TOOL" ]; then
+        echo "ranlib is required to rebuild static libgcc_s.a"
+        return 1
+    fi
+    if [ ! -f "$GCC_LIBGCC" ]; then
+        echo "missing static libgcc archive: $GCC_LIBGCC"
+        return 1
+    fi
+    if [ ! -f "$GCC_LIBGCC_EH" ]; then
+        echo "missing static libgcc_eh archive: $GCC_LIBGCC_EH"
+        return 1
+    fi
+
+    find "$PREFIX" \( -type f -o -type l \) -name "libgcc_s.a" -print > "$CANDIDATE_LIST"
+    checkStatus $? "collect libgcc_s candidates failed"
+    if [ ! -s "$CANDIDATE_LIST" ]; then
+        printf '%s\n' "$TARGET_ARCHIVE" > "$CANDIDATE_LIST"
+        checkStatus $? "create default libgcc_s candidate failed"
+    fi
+
+    TMP_ARCHIVE="$TARGET_ARCHIVE.static-tmp"
+    MRI_SCRIPT="$TARGET_ARCHIVE.mri"
+    rm -f "$TMP_ARCHIVE" "$MRI_SCRIPT"
+    cat > "$MRI_SCRIPT" <<EOF
+CREATE $TMP_ARCHIVE
+ADDLIB $GCC_LIBGCC_EH
+ADDLIB $GCC_LIBGCC
+SAVE
+END
+EOF
+    "$AR_TOOL" -M < "$MRI_SCRIPT"
+    checkStatus $? "rebuild static libgcc_s.a failed"
+    rm -f "$MRI_SCRIPT"
+    checkStatus $? "remove libgcc_s MRI script failed"
+
+    while IFS= read -r TARGET_ARCHIVE
+    do
+        echo "neutralize $TARGET_ARCHIVE <- $GCC_LIBGCC_EH + $GCC_LIBGCC"
+        rm -f "$TARGET_ARCHIVE"
+        checkStatus $? "remove libgcc_s import library failed"
+        cp -f "$TMP_ARCHIVE" "$TARGET_ARCHIVE"
+        checkStatus $? "replace libgcc_s.a with static archive failed"
+        "$RANLIB_TOOL" "$TARGET_ARCHIVE"
+        checkStatus $? "index static libgcc_s.a failed"
+        chmod a+r "$TARGET_ARCHIVE"
+        checkStatus $? "chmod static libgcc_s.a failed"
+        printArchiveMembers "$TARGET_ARCHIVE"
+    done < "$CANDIDATE_LIST"
+
+    rm -f "$TMP_ARCHIVE" "$CANDIDATE_LIST"
+    checkStatus $? "remove libgcc_s temporary files failed"
+}
+
+removeWindowsImportLibraries(){
+    PREFIX=$1
+
+    find "$PREFIX" \( -type f -o -type l \) -name 'libclang_rt*.dll.a' -print -exec rm -f {} \;
+    checkStatus $? "remove clang runtime import libraries failed"
+}
+
+printWindowsRuntimeLibraryState(){
+    PREFIX=$1
+
+    echo "remaining Windows runtime-sensitive libraries under $PREFIX:"
+    find "$PREFIX" \
+        \( -name 'libwinpthread.a' -o -name 'libwinpthread.dll.a' \
+        -o -name 'libpthread.a' -o -name 'libpthread.dll.a' \
+        -o -name 'libstdc++.a' -o -name 'libstdc++.dll.a' \
+        -o -name 'libgcc*.a' \
+        -o -name 'libc++.a' -o -name 'libc++.dll.a' \
+        -o -name 'libc++abi.a' -o -name 'libc++abi.dll.a' \
+        -o -name 'libunwind.a' -o -name 'libunwind.dll.a' \
+        -o -name 'libiconv.a' -o -name 'libiconv.dll.a' \
+        -o -name 'libcharset.a' -o -name 'libcharset.dll.a' \
+        -o -name 'libclang_rt*.a' \) -print | sort || true
+}
+
+neutralizeWindowsToolchainImportLibs(){
+    if ! isMsys; then
+        return
+    fi
+
+    PREFIX=$(windowsToolchainPrefix)
+    checkStatus $? "resolve Windows toolchain prefix failed"
+
+    echo "neutralize Windows toolchain runtime import libraries in $PREFIX"
+
+    if [ "${MSYSTEM:-}" = "CLANGARM64" ]; then
+        copyStaticArchiveOverImportLibsUnderPrefix "$PREFIX" "libc++.a" "libc++.dll.a" "required"
+        copyStaticArchiveOverImportLibsUnderPrefix "$PREFIX" "libc++abi.a" "libc++abi.dll.a" "required"
+        copyStaticArchiveOverImportLibsUnderPrefix "$PREFIX" "libunwind.a" "libunwind.dll.a" "required"
+    else
+        copyStaticArchiveOverImportLibsUnderPrefix "$PREFIX" "libstdc++.a" "libstdc++.dll.a" "required"
+        replaceLibgccSWithStaticArchive "$PREFIX"
+    fi
+
+    copyStaticArchiveOverImportLib "$PREFIX/lib/libwinpthread.a" "$PREFIX/lib/libwinpthread.dll.a"
+    copyStaticArchiveOverImportLib "$PREFIX/lib/libwinpthread.a" "$PREFIX/lib/libpthread.a"
+    copyStaticArchiveOverImportLib "$PREFIX/lib/libwinpthread.a" "$PREFIX/lib/libpthread.dll.a"
+    copyStaticArchiveOverImportLibIfPresent "$PREFIX/lib/libiconv.a" "$PREFIX/lib/libiconv.dll.a"
+    copyStaticArchiveOverImportLibIfPresent "$PREFIX/lib/libcharset.a" "$PREFIX/lib/libcharset.dll.a"
+    removeWindowsImportLibraries "$PREFIX"
+    printWindowsRuntimeLibraryState "$PREFIX"
+
+    echo "Windows toolchain runtime import libs neutralized"
+}
+
+windowsStaticRuntimeExtraLibs(){
+    if ! isMsys; then
+        return 1
+    fi
+
+    if [ "${MSYSTEM:-}" = "CLANGARM64" ]; then
+        printf '%s\n' "-Wl,-Bstatic -Wl,--start-group -lc++ -lc++abi -lunwind -lwinpthread -Wl,--end-group -Wl,-Bdynamic"
+    else
+        printf '%s\n' "-Wl,-Bstatic -Wl,--start-group -lstdc++ -lgcc_eh -lgcc -lwinpthread -Wl,--end-group -Wl,-Bdynamic"
+    fi
+}
+
+windowsStaticRuntimeLdFlags(){
+    WINDOWS_STATIC_RUNTIME_EXTRA_LIBS=$(windowsStaticRuntimeExtraLibs) || return 1
+
+    if [ "${MSYSTEM:-}" = "CLANGARM64" ]; then
+        printf '%s\n' "-static $WINDOWS_STATIC_RUNTIME_EXTRA_LIBS"
+    else
+        printf '%s\n' "-static -static-libgcc -static-libstdc++ $WINDOWS_STATIC_RUNTIME_EXTRA_LIBS"
+    fi
+}
+
 applyTargetEnv(){
     if [ "$(uname)" != "Darwin" ]; then
         return

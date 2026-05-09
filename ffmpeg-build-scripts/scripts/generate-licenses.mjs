@@ -47,6 +47,15 @@ async function readVersion(dependency) {
   }
 
   const versionKey = dependency.version_key ?? dependency.name
+  const overridePath = path.join(logDir, versionKey, 'version')
+  if (await exists(overridePath)) {
+    const version = normalizeText(await fs.readFile(overridePath, 'utf8'))
+    if (!version) {
+      throw new Error(`Build-local version metadata for ${dependency.name} is empty: ${overridePath}`)
+    }
+    return version
+  }
+
   const versionPath = path.join(versionDir, versionKey)
   try {
     const version = normalizeText(await fs.readFile(versionPath, 'utf8'))
@@ -68,8 +77,32 @@ async function readVersion(dependency) {
 function templateValues(version) {
   return {
     version,
-    version_major_minor: version.split('.').slice(0, 2).join('.')
+    version_major_minor: version.split('.').slice(0, 2).join('.'),
+    package_version: `${version}-1`
   }
+}
+
+async function readTemplateValues(dependency, version) {
+  const values = templateValues(version)
+  const versionKey = dependency.version_key ?? dependency.name
+  const overrideDir = path.join(logDir, versionKey)
+  if (!(await exists(overrideDir))) {
+    return values
+  }
+
+  const entries = await fs.readdir(overrideDir, { withFileTypes: true })
+  for (const entry of entries) {
+    if (!entry.isFile()) {
+      continue
+    }
+    const key = entry.name
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new Error(`Invalid build-local template key for ${dependency.name}: ${key}`)
+    }
+    values[key] = normalizeText(await fs.readFile(path.join(overrideDir, key), 'utf8'))
+  }
+
+  return values
 }
 
 function renderTemplate(text, values) {
@@ -137,7 +170,7 @@ async function renderDependency(dependency) {
   }
 
   const version = await readVersion(dependency)
-  const values = templateValues(version)
+  const values = await readTemplateValues(dependency, version)
   const sourceDir = await resolveSourceDir(renderTemplate(dependency.source_glob, values))
   if (!sourceDir) {
     throw new Error(

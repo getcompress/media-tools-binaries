@@ -85,11 +85,11 @@ jobs:
           fi
 
           if [[ "${{ inputs.build_windows_x64 }}" == "true" ]]; then
-            add_row '{"platform":"windows","artifact_arch":"x64","runner":"windows-latest","target_arch":"","macos_min":"","msystem":"MINGW64","mingw_packages":"mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-pkgconf mingw-w64-x86_64-openssl mingw-w64-x86_64-python mingw-w64-x86_64-meson mingw-w64-x86_64-rust mingw-w64-x86_64-cargo-c mingw-w64-x86_64-nodejs","ffmpeg_arch":"x86_64","rust_target":"x86_64-pc-windows-gnu","vpx_target":"x86_64-win64-gcc","artifact_bin":"ffmpeg.exe"}'
+            add_row '{"platform":"windows","artifact_arch":"x64","runner":"windows-latest","target_arch":"","macos_min":"","msystem":"MINGW64","mingw_packages":"mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-pkgconf mingw-w64-x86_64-openssl mingw-w64-x86_64-libiconv mingw-w64-x86_64-python mingw-w64-x86_64-meson mingw-w64-x86_64-rust mingw-w64-x86_64-cargo-c mingw-w64-x86_64-nodejs","ffmpeg_arch":"x86_64","rust_target":"x86_64-pc-windows-gnu","vpx_target":"x86_64-win64-gcc","artifact_bin":"ffmpeg.exe"}'
           fi
 
           if [[ "${{ inputs.build_windows_arm64 }}" == "true" ]]; then
-            add_row '{"platform":"windows","artifact_arch":"arm64","runner":"windows-11-arm","target_arch":"","macos_min":"","msystem":"CLANGARM64","mingw_packages":"mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-cmake mingw-w64-clang-aarch64-ninja mingw-w64-clang-aarch64-pkgconf mingw-w64-clang-aarch64-openssl mingw-w64-clang-aarch64-python mingw-w64-clang-aarch64-meson mingw-w64-clang-aarch64-rust mingw-w64-clang-aarch64-cargo-c mingw-w64-clang-aarch64-nodejs","ffmpeg_arch":"aarch64","rust_target":"aarch64-pc-windows-gnullvm","vpx_target":"arm64-win64-gcc","artifact_bin":"ffmpeg.exe"}'
+            add_row '{"platform":"windows","artifact_arch":"arm64","runner":"windows-11-arm","target_arch":"","macos_min":"","msystem":"CLANGARM64","mingw_packages":"mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-cmake mingw-w64-clang-aarch64-ninja mingw-w64-clang-aarch64-pkgconf mingw-w64-clang-aarch64-openssl mingw-w64-clang-aarch64-libiconv mingw-w64-clang-aarch64-python mingw-w64-clang-aarch64-meson mingw-w64-clang-aarch64-rust mingw-w64-clang-aarch64-cargo-c mingw-w64-clang-aarch64-nodejs","ffmpeg_arch":"aarch64","rust_target":"aarch64-pc-windows-gnullvm","vpx_target":"arm64-win64-gcc","artifact_bin":"ffmpeg.exe"}'
           fi
 
           printf 'build_matrix=[%s]\n' "$rows" >> "$GITHUB_OUTPUT"
@@ -424,9 +424,65 @@ jobs:
           rm -rf "$DIST_DIR" "$ZIP_PATH"
           mkdir -p "$DIST_DIR"
 
-          for tool in node objdump zip awk grep tr cp; do
+          for tool in node objdump zip awk grep tr cp find sort; do
             command -v "$tool" >/dev/null
           done
+
+          print_windows_runtime_diagnostics() {
+            echo "==> imported DLLs"
+            printf '%s\n' "${DLLS:-}"
+
+            echo "==> runtime-sensitive libraries in active toolchain"
+            if [[ -n "${TOOLCHAIN_PREFIX:-}" ]]; then
+              find "$TOOLCHAIN_PREFIX" \
+                \( -name 'libwinpthread.a' -o -name 'libwinpthread.dll.a' \
+                -o -name 'libpthread.a' -o -name 'libpthread.dll.a' \
+                -o -name 'libstdc++.a' -o -name 'libstdc++.dll.a' \
+                -o -name 'libgcc*.a' \
+                -o -name 'libc++.a' -o -name 'libc++.dll.a' \
+                -o -name 'libc++abi.a' -o -name 'libc++abi.dll.a' \
+                -o -name 'libunwind.a' -o -name 'libunwind.dll.a' \
+                -o -name 'libiconv.a' -o -name 'libiconv.dll.a' \
+                -o -name 'libcharset.a' -o -name 'libcharset.dll.a' \
+                -o -name 'libclang_rt*.a' \) -print | sort || true
+            else
+              echo "toolchain prefix is not set"
+            fi
+
+            echo "==> runtime-sensitive libraries in build tool directory"
+            find "$BUILD_ROOT/tool" \
+              \( -name 'libwinpthread.a' -o -name 'libwinpthread.dll.a' \
+              -o -name 'libpthread.a' -o -name 'libpthread.dll.a' \
+              -o -name 'libstdc++.a' -o -name 'libstdc++.dll.a' \
+              -o -name 'libgcc*.a' \
+              -o -name 'libc++.a' -o -name 'libc++.dll.a' \
+              -o -name 'libc++abi.a' -o -name 'libc++abi.dll.a' \
+              -o -name 'libunwind.a' -o -name 'libunwind.dll.a' \
+              -o -name 'libiconv.a' -o -name 'libiconv.dll.a' \
+              -o -name 'libcharset.a' -o -name 'libcharset.dll.a' \
+              -o -name 'libclang_rt*.a' \) -print | sort || true
+
+            echo "==> Windows runtime import-lib neutralization log"
+            if [[ -f "$BUILD_ROOT/log/neutralize-windows-runtime-import-libs.log" ]]; then
+              cat "$BUILD_ROOT/log/neutralize-windows-runtime-import-libs.log"
+            else
+              echo "neutralization log not found at $BUILD_ROOT/log/neutralize-windows-runtime-import-libs.log"
+            fi
+
+            echo "==> FFmpeg configure runtime flags"
+            if [[ -f "$BUILD_ROOT/log/build-ffmpeg.log" ]]; then
+              grep -niE 'configuration:|extra-ldexeflags|extra-libs|--ld=|libgcc|stdc\+\+|c\+\+|c\+\+abi|unwind|winpthread|pthread|iconv|charset|clang_rt' "$BUILD_ROOT/log/build-ffmpeg.log" || true
+            else
+              echo "build-ffmpeg.log not found at $BUILD_ROOT/log/build-ffmpeg.log"
+            fi
+
+            if [[ -f "$FFMPEG_LINK_MAP" ]]; then
+              echo "==> ffmpeg link map runtime entries"
+              grep -iE 'winpthread|pthread|libgcc|libstdc\+\+|stdc\+\+|libc\+\+|c\+\+abi|unwind|iconv|charset|clang_rt' "$FFMPEG_LINK_MAP" || true
+            else
+              echo "==> ffmpeg link map not found at $FFMPEG_LINK_MAP"
+            fi
+          }
 
           test -x "$FFMPEG_BIN"
 
@@ -460,36 +516,46 @@ jobs:
 
           DLLS="$(objdump -p "$DIST_DIR/ffmpeg.exe" | awk -F': ' '/DLL Name:/ { print $2 }')"
           printf '%s\n' "$DLLS"
+          echo "==> Verifying toolchain runtime linkage"
           if [[ "${MSYSTEM}" == "CLANGARM64" ]]; then
-            RUNTIME_DIR="$(dirname "$(command -v clang)")"
+            command -v clang
+            command -v clang++ || true
+            TOOLCHAIN_PREFIX="$(dirname "$(dirname "$(command -v clang)")")"
           else
-            RUNTIME_DIR="$(dirname "$(command -v gcc)")"
+            command -v gcc
+            command -v g++ || true
+            TOOLCHAIN_PREFIX="$(dirname "$(dirname "$(command -v gcc)")")"
           fi
+          find "$TOOLCHAIN_PREFIX" \
+            \( -name 'libwinpthread.a' -o -name 'libwinpthread.dll.a' \
+            -o -name 'libpthread.a' -o -name 'libpthread.dll.a' \
+            -o -name 'libstdc++.a' -o -name 'libstdc++.dll.a' \
+            -o -name 'libgcc*.a' \
+            -o -name 'libc++.a' -o -name 'libc++.dll.a' \
+            -o -name 'libc++abi.a' -o -name 'libc++abi.dll.a' \
+            -o -name 'libunwind.a' -o -name 'libunwind.dll.a' \
+            -o -name 'libiconv.a' -o -name 'libiconv.dll.a' \
+            -o -name 'libcharset.a' -o -name 'libcharset.dll.a' \
+            -o -name 'libclang_rt*.a' \) -print | sort || true
 
           while IFS= read -r dll; do
             [[ -n "$dll" ]] || continue
             dll_lower="$(printf '%s' "$dll" | tr '[:upper:]' '[:lower:]')"
 
             case "$dll_lower" in
-              libwinpthread-1.dll|libgcc_s_*.dll|libstdc++-6.dll|libclang_rt.*.dll)
-                runtime_source="${RUNTIME_DIR}/${dll}"
-                if [[ ! -f "$runtime_source" ]]; then
-                  echo "ERROR: Windows binary depends on toolchain runtime DLL not found in toolchain bin: $dll"
-                  exit 1
-                fi
-                if [[ "$dll_lower" == libgcc_s_* && -f "$FFMPEG_LINK_MAP" ]]; then
-                  echo "==> ffmpeg link map entries mentioning libgcc"
-                  grep -i 'libgcc' "$FFMPEG_LINK_MAP" || true
-                fi
-                cp "$runtime_source" "$DIST_DIR/$dll"
+              libwinpthread-1.dll|libgcc_s_*.dll|libstdc++-6.dll|libiconv-2.dll|libcharset-1.dll|libc++*.dll|libc++abi*.dll|libunwind*.dll|libclang_rt.*.dll)
+                echo "ERROR: Windows ffmpeg binary depends on toolchain runtime DLL: $dll"
+                print_windows_runtime_diagnostics
+                exit 1
                 ;;
             esac
 
             case "$dll_lower" in
-              api-ms-win-*.dll|ext-ms-*.dll|advapi32.dll|bcrypt.dll|bcryptprimitives.dll|cfgmgr32.dll|combase.dll|comdlg32.dll|crypt32.dll|dbghelp.dll|dnsapi.dll|gdi32.dll|iphlpapi.dll|kernel32.dll|kernelbase.dll|msvcrt.dll|normaliz.dll|ntdll.dll|ole32.dll|oleaut32.dll|powrprof.dll|psapi.dll|rpcrt4.dll|secur32.dll|setupapi.dll|shell32.dll|shlwapi.dll|ucrtbase.dll|user32.dll|userenv.dll|version.dll|winmm.dll|ws2_32.dll|wsock32.dll|avicap32.dll|libwinpthread-1.dll|libgcc_s_*.dll|libstdc++-6.dll|libclang_rt.*.dll)
+              api-ms-win-*.dll|ext-ms-*.dll|advapi32.dll|bcrypt.dll|bcryptprimitives.dll|cfgmgr32.dll|combase.dll|comdlg32.dll|crypt32.dll|dbghelp.dll|dnsapi.dll|gdi32.dll|iphlpapi.dll|kernel32.dll|kernelbase.dll|msvcrt.dll|normaliz.dll|ntdll.dll|ole32.dll|oleaut32.dll|powrprof.dll|psapi.dll|rpcrt4.dll|secur32.dll|setupapi.dll|shell32.dll|shlwapi.dll|ucrtbase.dll|user32.dll|userenv.dll|version.dll|winmm.dll|ws2_32.dll|wsock32.dll|avicap32.dll)
                 ;;
               *)
                 echo "ERROR: Windows binary has a non-system DLL dependency: $dll"
+                print_windows_runtime_diagnostics
                 exit 1
                 ;;
             esac
@@ -498,7 +564,7 @@ jobs:
           test -s "$LICENSES_MD"
           test -s "$SOURCES_MD"
 
-          zip -X -j "$ZIP_PATH" "$DIST_DIR"/*
+          zip -X -j "$ZIP_PATH" "$DIST_DIR/ffmpeg.exe" "$LICENSES_MD" "$SOURCES_MD"
 
       - name: Upload package
         uses: actions/upload-artifact@v7

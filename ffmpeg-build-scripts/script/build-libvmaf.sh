@@ -64,9 +64,10 @@ checkStatus $? "installation failed"
 # post-installation
 # static linking fails because c++ dependency is missing in pc file (pkg-config file)
 # https://github.com/Netflix/vmaf/issues/788
-sed -i.original -e 's/lvmaf/lvmaf -lstdc++/g' $TOOL_DIR/lib/pkgconfig/libvmaf.pc
-checkStatus $? "modify pkg-config .pc file failed"
 if isMsys; then
-    sed -i.original -e 's/lvmaf -lstdc++/lvmaf -lstdc++ -lpthread/g' $TOOL_DIR/lib/pkgconfig/libvmaf.pc
+    sed -i.original -e 's/lvmaf/lvmaf -Wl,-Bstatic -lstdc++ -lwinpthread -Wl,-Bdynamic/g' $TOOL_DIR/lib/pkgconfig/libvmaf.pc
     checkStatus $? "modify Windows pkg-config .pc file failed"
+else
+    sed -i.original -e 's/lvmaf/lvmaf -lstdc++/g' $TOOL_DIR/lib/pkgconfig/libvmaf.pc
+    checkStatus $? "modify pkg-config .pc file failed"
 fi
