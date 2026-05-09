@@ -174,6 +174,10 @@ replaceLibgccSWithStaticArchive(){
     GCC_LIB_DIR=$(dirname "$GCC_LIBGCC")
     GCC_LIBGCC_EH="$GCC_LIB_DIR/libgcc_eh.a"
     TARGET_ARCHIVE="$PREFIX/lib/libgcc_s.a"
+    BUILD_DIR="$PREFIX/lib"
+    TMP_ARCHIVE_NAME="libgcc_s.a.static-tmp"
+    TMP_ARCHIVE="$BUILD_DIR/$TMP_ARCHIVE_NAME"
+    MRI_SCRIPT="$BUILD_DIR/libgcc_s.a.mri"
     CANDIDATE_LIST=$(mktemp 2> /dev/null || mktemp -t ffmpeg-libgcc-s)
     checkStatus $? "create libgcc_s candidate list failed"
     AR_TOOL=$(windowsArTool)
@@ -196,6 +200,19 @@ replaceLibgccSWithStaticArchive(){
         return 1
     fi
 
+    if [ "$(dirname "$GCC_LIBGCC")" = "$BUILD_DIR" ]; then
+        MRI_LIBGCC=$(basename "$GCC_LIBGCC")
+    else
+        MRI_LIBGCC=$(cygpath -m "$GCC_LIBGCC")
+        checkStatus $? "convert libgcc path for ar MRI failed"
+    fi
+    if [ "$(dirname "$GCC_LIBGCC_EH")" = "$BUILD_DIR" ]; then
+        MRI_LIBGCC_EH=$(basename "$GCC_LIBGCC_EH")
+    else
+        MRI_LIBGCC_EH=$(cygpath -m "$GCC_LIBGCC_EH")
+        checkStatus $? "convert libgcc_eh path for ar MRI failed"
+    fi
+
     find "$PREFIX" \( -type f -o -type l \) -name "libgcc_s.a" -print > "$CANDIDATE_LIST"
     checkStatus $? "collect libgcc_s candidates failed"
     if [ ! -s "$CANDIDATE_LIST" ]; then
@@ -203,17 +220,23 @@ replaceLibgccSWithStaticArchive(){
         checkStatus $? "create default libgcc_s candidate failed"
     fi
 
-    TMP_ARCHIVE="$TARGET_ARCHIVE.static-tmp"
-    MRI_SCRIPT="$TARGET_ARCHIVE.mri"
     rm -f "$TMP_ARCHIVE" "$MRI_SCRIPT"
     cat > "$MRI_SCRIPT" <<EOF
-CREATE $TMP_ARCHIVE
-ADDLIB $GCC_LIBGCC_EH
-ADDLIB $GCC_LIBGCC
+CREATE $TMP_ARCHIVE_NAME
+ADDLIB $MRI_LIBGCC_EH
+ADDLIB $MRI_LIBGCC
 SAVE
 END
 EOF
-    "$AR_TOOL" -M < "$MRI_SCRIPT"
+
+    echo "ar MRI working directory: $BUILD_DIR"
+    echo "ar MRI temporary archive: $TMP_ARCHIVE_NAME"
+    echo "ar MRI ADDLIB libgcc_eh: $MRI_LIBGCC_EH"
+    echo "ar MRI ADDLIB libgcc: $MRI_LIBGCC"
+    echo "ar MRI script:"
+    cat "$MRI_SCRIPT"
+
+    (cd "$BUILD_DIR" && "$AR_TOOL" -M < "$MRI_SCRIPT")
     checkStatus $? "rebuild static libgcc_s.a failed"
     rm -f "$MRI_SCRIPT"
     checkStatus $? "remove libgcc_s MRI script failed"
